@@ -93,7 +93,7 @@ const PAGE: { title: string; tagline: string; sections: { heading: string; block
               code: "docker compose run --rm ingest register-project my-service",
             },
             {
-              text: "Point the service's OpenTelemetry exporter at sensorium. sensorium takes neither gzip nor gRPC. For an exporter that only speaks those, put an OpenTelemetry Collector in front and set `compression: none` on its otlphttp exporter.",
+              text: "Point the service's OpenTelemetry exporter at sensorium. sensorium takes OTLP/HTTP, plain or gzip, but not gRPC. For an exporter that only speaks gRPC, put an OpenTelemetry Collector in front.",
               code: "OTEL_EXPORTER_OTLP_ENDPOINT=https://sensorium.example.com\nOTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf\nOTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer%20<ingest token>",
             },
             {

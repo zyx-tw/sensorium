@@ -69,15 +69,52 @@ export async function listProjects(pool: Pool): Promise<ProjectSummary[]> {
 
 // --- writes (ingest side) ---------------------------------------------
 
+/** PostgreSQL accepts at most 65535 bind parameters per statement. */
+export const MAX_BIND_PARAMETERS = 65535;
+
+/**
+ * Inserts rows as multi-row VALUES statements, chunked so no statement passes the bind
+ * parameter limit. A batch that needs more than one statement runs in one transaction,
+ * so a failed export leaves nothing behind and its retry cannot duplicate rows.
+ */
+async function insertChunked(
+  pool: Pool,
+  sql: (tuples: string) => string,
+  columns: number,
+  rows: unknown[][],
+): Promise<void> {
+  const perStatement = Math.floor(MAX_BIND_PARAMETERS / columns);
+  const statements: { text: string; values: unknown[] }[] = [];
+  for (let start = 0; start < rows.length; start += perStatement) {
+    const chunk = rows.slice(start, start + perStatement);
+    const tuples = chunk.map((_, i) => `(${Array.from({ length: columns }, (_, j) => `$${i * columns + j + 1}`).join(", ")})`);
+    statements.push({ text: sql(tuples.join(", ")), values: chunk.flat() });
+  }
+  if (statements.length === 1) {
+    await pool.query(statements[0]!.text, statements[0]!.values);
+    return;
+  }
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    for (const statement of statements) await client.query(statement.text, statement.values);
+    await client.query("commit");
+  } catch (err) {
+    await client.query("rollback").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 export async function insertLogs(pool: Pool, rows: LogRow[]): Promise<number> {
   if (rows.length === 0) return 0;
   const columns = ["project", "ts", "severity", "body", "trace_id", "span_id", "resource", "attributes"];
-  const tuples: string[] = [];
-  const values: unknown[] = [];
-  rows.forEach((row, i) => {
-    const base = i * columns.length;
-    tuples.push(`(${columns.map((_, j) => `$${base + j + 1}`).join(", ")})`);
-    values.push(
+  await insertChunked(
+    pool,
+    (tuples) => `insert into logs (${columns.join(", ")}) values ${tuples}`,
+    columns.length,
+    rows.map((row) => [
       row.project,
       row.ts,
       row.severity,
@@ -86,9 +123,8 @@ export async function insertLogs(pool: Pool, rows: LogRow[]): Promise<number> {
       row.spanId,
       JSON.stringify(row.resource),
       JSON.stringify(row.attributes),
-    );
-  });
-  await pool.query(`insert into logs (${columns.join(", ")}) values ${tuples.join(", ")}`, values);
+    ]),
+  );
   return rows.length;
 }
 
@@ -110,12 +146,24 @@ export async function insertSpans(pool: Pool, rows: SpanRow[]): Promise<number> 
     "resource",
     "attributes",
   ];
-  const tuples: string[] = [];
-  const values: unknown[] = [];
-  rows.forEach((row, i) => {
-    const base = i * columns.length;
-    tuples.push(`(${columns.map((_, j) => `$${base + j + 1}`).join(", ")})`);
-    values.push(
+  // One statement cannot upsert the same key twice, so keep the last copy of each span.
+  const unique = [...new Map(rows.map((row) => [`${row.traceId}/${row.spanId}`, row])).values()];
+  await insertChunked(
+    pool,
+    (tuples) => `insert into spans (${columns.join(", ")}) values ${tuples}
+     on conflict (project, trace_id, span_id) do update set
+       parent_span_id = excluded.parent_span_id,
+       name = excluded.name,
+       kind = excluded.kind,
+       start_ts = excluded.start_ts,
+       end_ts = excluded.end_ts,
+       duration_ms = excluded.duration_ms,
+       status_code = excluded.status_code,
+       http_status_code = excluded.http_status_code,
+       resource = excluded.resource,
+       attributes = excluded.attributes`,
+    columns.length,
+    unique.map((row) => [
       row.project,
       row.traceId,
       row.spanId,
@@ -129,22 +177,7 @@ export async function insertSpans(pool: Pool, rows: SpanRow[]): Promise<number> 
       row.httpStatusCode,
       JSON.stringify(row.resource),
       JSON.stringify(row.attributes),
-    );
-  });
-  await pool.query(
-    `insert into spans (${columns.join(", ")}) values ${tuples.join(", ")}
-     on conflict (project, trace_id, span_id) do update set
-       parent_span_id = excluded.parent_span_id,
-       name = excluded.name,
-       kind = excluded.kind,
-       start_ts = excluded.start_ts,
-       end_ts = excluded.end_ts,
-       duration_ms = excluded.duration_ms,
-       status_code = excluded.status_code,
-       http_status_code = excluded.http_status_code,
-       resource = excluded.resource,
-       attributes = excluded.attributes`,
-    values,
+    ]),
   );
   return rows.length;
 }
@@ -152,12 +185,11 @@ export async function insertSpans(pool: Pool, rows: SpanRow[]): Promise<number> 
 export async function insertMetricPoints(pool: Pool, rows: MetricPointRow[]): Promise<number> {
   if (rows.length === 0) return 0;
   const columns = ["project", "metric_name", "ts", "kind", "value", "attributes", "resource"];
-  const tuples: string[] = [];
-  const values: unknown[] = [];
-  rows.forEach((row, i) => {
-    const base = i * columns.length;
-    tuples.push(`(${columns.map((_, j) => `$${base + j + 1}`).join(", ")})`);
-    values.push(
+  await insertChunked(
+    pool,
+    (tuples) => `insert into metric_points (${columns.join(", ")}) values ${tuples}`,
+    columns.length,
+    rows.map((row) => [
       row.project,
       row.metricName,
       row.ts,
@@ -165,9 +197,8 @@ export async function insertMetricPoints(pool: Pool, rows: MetricPointRow[]): Pr
       row.value,
       JSON.stringify(row.attributes),
       JSON.stringify(row.resource),
-    );
-  });
-  await pool.query(`insert into metric_points (${columns.join(", ")}) values ${tuples.join(", ")}`, values);
+    ]),
+  );
   return rows.length;
 }
 

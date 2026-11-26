@@ -72,8 +72,8 @@ describe("landing page", () => {
     expect(page).toContain("route <code>/mcp</code> to port 8788");
     expect(page).toContain('<a class="link" href="https://www.zyx.tw/privacy">Privacy</a>');
     expect(md).toContain("[.env.example](https://github.com/zyx1121/sensorium/blob/main/.env.example)");
-    // A Collector re-exports with gzip unless told not to, and ingest refuses gzip.
-    expect(page).toContain("<code>compression: none</code>");
+    // Ingest decodes gzip, so a Collector needs no compression override.
+    expect(page).toContain("plain or gzip, but not gRPC");
   });
 
   test("the CSP hash matches the page's one <style> block", async () => {

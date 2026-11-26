@@ -771,3 +771,58 @@ describe.skipIf(!DATABASE_URL)("query_metrics + listMetricNames (integration, re
     expect(result.points).toEqual([]);
   });
 });
+
+describe.skipIf(!DATABASE_URL)("large batches (integration, requires DATABASE_URL)", () => {
+  let pool: Pool;
+  const project = `test-big-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+
+  beforeAll(async () => {
+    pool = new Pool({ connectionString: DATABASE_URL });
+    await runMigrations(pool);
+    await createProject(pool, project, `token-${project}`);
+  });
+
+  afterAll(async () => {
+    await pool.query("delete from metric_points where project = $1", [project]);
+    await pool.query("delete from spans where project = $1", [project]);
+    await pool.query("delete from projects where name = $1", [project]);
+    await pool.end();
+  });
+
+  test("a batch past the 65535 bind-parameter limit is stored whole", async () => {
+    const ts = new Date();
+    const rows: MetricPointRow[] = Array.from({ length: 20_000 }, (_, i) => ({
+      project,
+      metricName: "big",
+      ts,
+      kind: "gauge",
+      value: i,
+      attributes: { i },
+      resource: {},
+    }));
+    expect(await insertMetricPoints(pool, rows)).toBe(20_000);
+    const { rows: count } = await pool.query("select count(*)::int n from metric_points where project = $1", [project]);
+    expect(count[0].n).toBe(20_000);
+  });
+
+  test("the same span twice in one batch is stored once", async () => {
+    const span: SpanRow = {
+      project,
+      traceId: "a".repeat(32),
+      spanId: "b".repeat(16),
+      parentSpanId: null,
+      name: "dup",
+      kind: "server",
+      startTs: new Date(),
+      endTs: new Date(),
+      durationMs: 1,
+      statusCode: "ok",
+      httpStatusCode: 200,
+      resource: {},
+      attributes: {},
+    };
+    await insertSpans(pool, [span, { ...span, name: "dup2" }]);
+    const { rows } = await pool.query("select name from spans where project = $1", [project]);
+    expect(rows).toEqual([{ name: "dup2" }]);
+  });
+});

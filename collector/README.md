@@ -8,8 +8,8 @@ Producer's SDK exports normally (OTLP/gRPC or HTTP, whatever it defaults to)
 to a standard `otelcol` binary running `config.yaml` in this directory. The
 Collector re-exports OTLP/HTTP **JSON** to `apps/ingest`, with the project's
 bearer token attached via `SENSORIUM_INGEST_TOKEN`. Its otlphttp exporter
-gzips by default and ingest does not decode gzip, so `config.yaml` sets
-`compression: none`; keep it in any config of your own.
+gzips by default, which ingest decodes, and it retries the 429 and 503 that
+ingest returns while the database is unavailable.
 
 Use this when: the producer's SDK doesn't easily support OTLP/HTTP+JSON
 directly, you want batching/retry, or you want to fan the same telemetry out
