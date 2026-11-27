@@ -68,18 +68,22 @@ describe.skipIf(!DATABASE_URL)("agentUsage (integration, requires DATABASE_URL)"
     expect(usage.errorTypes).toEqual(expect.arrayContaining([{ type: "overloaded", count: 1 }, { type: "error", count: 1 }]));
   });
 
-  test("today's spans partition has the gen_ai partial index, and the query uses it", async () => {
-    const today = new Date().toISOString().slice(0, 10).replaceAll("-", "");
-    const { rows } = await pool.query(
-      "select indexdef from pg_indexes where tablename = $1 and indexdef like '%gen_ai.operation.name%'",
-      [`spans_${today}`],
-    );
-    expect(rows.length).toBe(1);
+  test("the partitions ahead of today have the gen_ai partial index, and the query uses it", async () => {
+    // 0009 builds it only on the empty days ahead, so span writes are not held up.
+    const day = (offset: number) => new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10).replaceAll("-", "");
+    const indexed = async (offset: number) =>
+      (
+        await pool.query("select 1 from pg_indexes where tablename = $1 and indexdef like '%gen_ai.operation.name%'", [
+          `spans_${day(offset)}`,
+        ])
+      ).rows.length;
+    expect(await indexed(1)).toBe(1);
     const client = await pool.connect();
     try {
       await client.query("set enable_seqscan = off");
       const { rows: plan } = await client.query(
-        `explain select count(*) from spans where project = $1 and start_ts >= now() - interval '1 hour'
+        `explain select count(*) from spans where project = $1
+           and start_ts >= now() + interval '1 day' and start_ts < now() + interval '2 days'
            and (attributes ? 'gen_ai.operation.name' or attributes ? 'gen_ai.request.model'
                 or attributes ? 'gen_ai.provider.name' or attributes ? 'gen_ai.system')`,
         [project],
