@@ -43,11 +43,11 @@ docker compose up -d
 > [!IMPORTANT]
 > 兩個 port 都只聽 127.0.0.1，權杖放在 Authorization 標頭裡傳送。在機器外的任何東西連進來之前，前面要先放一個有 TLS 的反向代理。
 
-兩個端點共用一個網域時，代理把 `/mcp` 送到 8788，其他都送到 8787。Caddy 的寫法：
+兩個端點共用一個網域時，代理把 `/mcp`（用 OAuth 時還有 `/.well-known/oauth-protected-resource`）送到 8788，其他都送到 8787。Caddy 的寫法：
 
 ```caddyfile
 sensorium.example.com {
-	handle /mcp* {
+	handle /mcp* /.well-known/oauth-protected-resource* {
 		reverse_proxy 127.0.0.1:8788
 	}
 	handle {
@@ -101,7 +101,8 @@ sensorium.example.com {
 | 參數 | 作用 | 預設 |
 |------|------|------|
 | `POSTGRES_PASSWORD` | 內建 Postgres 的密碼 | 必填 |
-| `SENSORIUM_MCP_TOKEN` | 每個 agent 送到 `/mcp` 的 bearer 權杖 | 必填 |
+| `SENSORIUM_MCP_TOKEN` | agent 送到 `/mcp` 的固定 bearer 權杖 | 這個或 OIDC 擇一 |
+| `SENSORIUM_MCP_OIDC_ISSUER`、`SENSORIUM_MCP_RESOURCE`、`SENSORIUM_MCP_OIDC_CLIENT_IDS`、`SENSORIUM_MCP_OIDC_ROLE` | 接受這個 issuer 發給這個 `/mcp` 網址、來自這些 client 的 OAuth access token，可再限定 realm 角色；並提供 protected resource metadata | 不設 |
 | `SENSORIUM_VERSION` | compose 執行的映像檔 tag | `latest` |
 | `SENSORIUM_BIND` | 兩個 port 監聽的位址 | `127.0.0.1` |
 | `SENSORIUM_INGEST_PORT`、`SENSORIUM_MCP_PORT` | 對外開放的 port | `8787`、`8788` |

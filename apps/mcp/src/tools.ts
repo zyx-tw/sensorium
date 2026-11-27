@@ -1,5 +1,4 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import type { McpServer, CallToolResult } from "@modelcontextprotocol/server";
 import { buildSpanTree } from "@sensorium/core";
 import {
   errorSummary,
@@ -38,17 +37,17 @@ export function registerTools(server: McpServer, pool: Pool): void {
         "Queries logs for a project within a time window, optionally filtered by severity, trace_id, a body substring, " +
         "source IP (client.address), or route (http.route). Returns full attributes per row, including " +
         "client.address/geo.country/geo.city/geo.region/http.route when the producer sets them.",
-      inputSchema: {
-        project: z.string(),
-        since: z.string().datetime().describe("ISO 8601 timestamp, inclusive lower bound"),
-        until: z.string().datetime().optional(),
-        severity: z.string().optional(),
-        contains: z.string().optional().describe("substring to match against log body (case-insensitive)"),
-        traceId: z.string().optional(),
-        ip: z.string().optional().describe("exact match against the client.address attribute"),
-        route: z.string().optional().describe("exact match against the http.route attribute"),
-        limit: z.number().int().positive().max(1000).optional(),
-      },
+      inputSchema: z.object({
+              project: z.string(),
+              since: z.string().datetime().describe("ISO 8601 timestamp, inclusive lower bound"),
+              until: z.string().datetime().optional(),
+              severity: z.string().optional(),
+              contains: z.string().optional().describe("substring to match against log body (case-insensitive)"),
+              traceId: z.string().optional(),
+              ip: z.string().optional().describe("exact match against the client.address attribute"),
+              route: z.string().optional().describe("exact match against the http.route attribute"),
+              limit: z.number().int().positive().max(1000).optional(),
+            }),
     },
     async ({ project, since, until, severity, contains, traceId, ip, route, limit }) => {
       const rows = await queryLogs(pool, {
@@ -71,10 +70,10 @@ export function registerTools(server: McpServer, pool: Pool): void {
     {
       title: "Query trace",
       description: "Fetches every span for a trace_id in a project and assembles them into a parent/child tree.",
-      inputSchema: {
-        project: z.string(),
-        traceId: z.string(),
-      },
+      inputSchema: z.object({
+              project: z.string(),
+              traceId: z.string(),
+            }),
     },
     async ({ project, traceId }) => {
       const spans = await queryTraceSpans(pool, { project, traceId });
@@ -95,11 +94,11 @@ export function registerTools(server: McpServer, pool: Pool): void {
         "Excludes outbound spans (this service's own fetch/db calls, e.g. calls to Supabase) from the " +
         "representative pick so it only shows requests this service actually served. Feed a traceId from " +
         "here into query_traces for the full span tree of one request.",
-      inputSchema: {
-        project: z.string(),
-        windowMinutes: z.number().int().positive().max(7 * 24 * 60).default(60),
-        limit: z.number().int().positive().max(1000).default(30),
-      },
+      inputSchema: z.object({
+              project: z.string(),
+              windowMinutes: z.number().int().positive().max(7 * 24 * 60).default(60),
+              limit: z.number().int().positive().max(1000).default(30),
+            }),
     },
     async ({ project, windowMinutes, limit }) =>
       textResult(await listTraces(pool, { project, windowMinutes, limit })),
@@ -111,10 +110,10 @@ export function registerTools(server: McpServer, pool: Pool): void {
       title: "Error summary",
       description:
         "Counts ERROR/FATAL logs and error-status spans for a project over a recent time window, with the top repeated log messages.",
-      inputSchema: {
-        project: z.string(),
-        windowMinutes: z.number().int().positive().max(7 * 24 * 60).default(60),
-      },
+      inputSchema: z.object({
+              project: z.string(),
+              windowMinutes: z.number().int().positive().max(7 * 24 * 60).default(60),
+            }),
     },
     async ({ project, windowMinutes }) => textResult(await errorSummary(pool, { project, windowMinutes })),
   );
@@ -133,11 +132,11 @@ export function registerTools(server: McpServer, pool: Pool): void {
         "sit on a sibling request span in the SAME trace — so both are pulled from any inbound span across " +
         "every trace the IP touched, not just the row that happened to carry the IP. Sorted by request count " +
         "descending. Also returns a by-country rollup for 'which countries are hitting us' at a glance.",
-      inputSchema: {
-        project: z.string(),
-        windowMinutes: z.number().int().positive().max(7 * 24 * 60).default(60),
-        limit: z.number().int().positive().max(1000).default(20).describe("max number of source IPs to return"),
-      },
+      inputSchema: z.object({
+              project: z.string(),
+              windowMinutes: z.number().int().positive().max(7 * 24 * 60).default(60),
+              limit: z.number().int().positive().max(1000).default(20).describe("max number of source IPs to return"),
+            }),
     },
     async ({ project, windowMinutes, limit }) => textResult(await topSources(pool, { project, windowMinutes, limit })),
   );
@@ -153,19 +152,19 @@ export function registerTools(server: McpServer, pool: Pool): void {
         "to limit (summary ignores limit). A metric with several series (e.g. hostmetrics' per-cpu/per-state " +
         "points) interleaves them — the labels live in each point's attributes, so group client-side for " +
         "per-series numbers. Histogram points carry ingest's v0 sum-only reduction.",
-      inputSchema: {
-        project: z.string(),
-        metricName: z.string().optional().describe("exact metric name; omit to list which metrics exist"),
-        since: z.string().datetime().describe("ISO 8601 timestamp, inclusive lower bound"),
-        until: z.string().datetime().optional(),
-        limit: z
-          .number()
-          .int()
-          .positive()
-          .max(1000)
-          .optional()
-          .describe("max points returned when metricName is set (default 100)"),
-      },
+      inputSchema: z.object({
+              project: z.string(),
+              metricName: z.string().optional().describe("exact metric name; omit to list which metrics exist"),
+              since: z.string().datetime().describe("ISO 8601 timestamp, inclusive lower bound"),
+              until: z.string().datetime().optional(),
+              limit: z
+                .number()
+                .int()
+                .positive()
+                .max(1000)
+                .optional()
+                .describe("max points returned when metricName is set (default 100)"),
+            }),
     },
     async ({ project, metricName, since, until, limit }) => {
       const window = { project, since: new Date(since), until: until ? new Date(until) : undefined };
@@ -179,12 +178,12 @@ export function registerTools(server: McpServer, pool: Pool): void {
     {
       title: "Search logs",
       description: "v0 substring search (ILIKE) over log body and attributes for a project since a given time.",
-      inputSchema: {
-        project: z.string(),
-        q: z.string(),
-        since: z.string().datetime(),
-        limit: z.number().int().positive().max(1000).optional(),
-      },
+      inputSchema: z.object({
+              project: z.string(),
+              q: z.string(),
+              since: z.string().datetime(),
+              limit: z.number().int().positive().max(1000).optional(),
+            }),
     },
     async ({ project, q, since, limit }) =>
       textResult(await searchLogs(pool, { project, q, since: new Date(since), limit })),
