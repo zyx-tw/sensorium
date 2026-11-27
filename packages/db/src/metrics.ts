@@ -188,7 +188,11 @@ export async function insertMetricPoints(pool: Pool, rows: MetricPointRow[]): Pr
   }
   if (late.length > 0) {
     statements.push({
-      text: "insert into metric_rollup_dirty (bucket) select unnest($1::timestamptz[]) on conflict do nothing",
+      // "do update", not "do nothing": the row lock on an existing mark makes a
+      // concurrent rollUpDirty wait for this batch to commit before it deletes
+      // the mark and recomputes, so the recompute sees these samples.
+      text:
+        "insert into metric_rollup_dirty (bucket) select unnest($1::timestamptz[]) on conflict (bucket) do update set bucket = excluded.bucket",
       values: [late],
     });
   }
@@ -272,7 +276,10 @@ async function rollUpDirty(pool: Pool, samplesFrom?: Date): Promise<number> {
     try {
       await client.query("begin");
       const { rows } = await client.query<{ bucket: Date }>(
-        `delete from metric_rollup_dirty where bucket in (select bucket from metric_rollup_dirty order by bucket limit 200)
+        // Locked in bucket order, the same order ingest marks them in, so the two never deadlock.
+        `delete from metric_rollup_dirty where bucket in (
+           select bucket from metric_rollup_dirty order by bucket limit 200 for update
+         )
          returning bucket`,
       );
       if (rows.length === 0) {

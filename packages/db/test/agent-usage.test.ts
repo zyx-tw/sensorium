@@ -68,6 +68,29 @@ describe.skipIf(!DATABASE_URL)("agentUsage (integration, requires DATABASE_URL)"
     expect(usage.errorTypes).toEqual(expect.arrayContaining([{ type: "overloaded", count: 1 }, { type: "error", count: 1 }]));
   });
 
+  test("today's spans partition has the gen_ai partial index, and the query uses it", async () => {
+    const today = new Date().toISOString().slice(0, 10).replaceAll("-", "");
+    const { rows } = await pool.query(
+      "select indexdef from pg_indexes where tablename = $1 and indexdef like '%gen_ai.operation.name%'",
+      [`spans_${today}`],
+    );
+    expect(rows.length).toBe(1);
+    const client = await pool.connect();
+    try {
+      await client.query("set enable_seqscan = off");
+      const { rows: plan } = await client.query(
+        `explain select count(*) from spans where project = $1 and start_ts >= now() - interval '1 hour'
+           and (attributes ? 'gen_ai.operation.name' or attributes ? 'gen_ai.request.model'
+                or attributes ? 'gen_ai.provider.name' or attributes ? 'gen_ai.system')`,
+        [project],
+      );
+      expect(plan.map((r) => r["QUERY PLAN"]).join("\n")).toContain("gen_ai_idx");
+    } finally {
+      await client.query("reset enable_seqscan");
+      client.release();
+    }
+  });
+
   test("a window with no GenAI spans is empty", async () => {
     const usage = await agentUsage(pool, { project, since: new Date(now + 60_000) });
     expect(usage).toEqual({ models: [], tools: [], errorTypes: [] });
