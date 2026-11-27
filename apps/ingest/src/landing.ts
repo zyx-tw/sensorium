@@ -18,11 +18,12 @@ import path from "node:path";
 
 const STATIC = path.join(import.meta.dirname, "..", "static");
 
-/** Files under static/, by path: the fonts and the favicon every zyx.tw site uses. */
+/** Files under static/, by path: the fonts and the icons every zyx.tw site uses. */
 const FILES: Record<string, { file: string; type: string }> = {
   "/fonts/MapleMonoNFCN-Regular.woff2": { file: "MapleMonoNFCN-Regular.woff2", type: "font/woff2" },
   "/fonts/MapleMonoNFCN-SemiBold.woff2": { file: "MapleMonoNFCN-SemiBold.woff2", type: "font/woff2" },
   "/favicon.ico": { file: "favicon.ico", type: "image/x-icon" },
+  "/icon.svg": { file: "icon.svg", type: "image/svg+xml" },
 };
 
 // The zyx mark from www.zyx.tw (packages/ui/src/components/zyx-mark.tsx).
@@ -293,7 +294,8 @@ function html(year: number): string {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${PAGE.title}</title>
 <meta name="description" content="${escape(PAGE.tagline)}">
-<link rel="icon" href="/favicon.ico">
+<link rel="icon" href="/favicon.ico" sizes="48x48">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
 <link rel="preload" href="/fonts/MapleMonoNFCN-Regular.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="alternate" type="text/markdown" href="/index.md">
 <style>${STYLE}</style>
