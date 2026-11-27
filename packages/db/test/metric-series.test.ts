@@ -23,6 +23,7 @@ const point = (over: Partial<MetricPointRow>): MetricPointRow => ({
 
 describe.skipIf(!DATABASE_URL)("0008 metric series (integration, requires DATABASE_URL)", () => {
   const dbName = `sens_series_${Date.now()}`;
+  const roRole = `${dbName}_ro`;
   let admin: Pool;
   let pool: Pool;
   let url: URL;
@@ -36,10 +37,10 @@ describe.skipIf(!DATABASE_URL)("0008 metric series (integration, requires DATABA
     pool = new Pool({ connectionString: url.toString() });
     await runMigrations(pool, { until: "0007_project_last_rejected.sql" });
     await createProject(pool, "p", "token-p");
-    await pool.query(`do $$ begin create role sens_series_ro; exception when duplicate_object then null; end $$`);
-    await pool.query("grant select on metric_points to sens_series_ro");
+    await pool.query(`do $$ begin create role ${roRole}; exception when duplicate_object then null; end $$`);
+    await pool.query(`grant select on metric_points to ${roRole}`);
     // Like golem_ro in production: column grants only on projects.
-    await pool.query("grant select (name, last_seen_at, created_at) on projects to sens_series_ro");
+    await pool.query(`grant select (name, last_seen_at, created_at) on projects to ${roRole}`);
     // Two old points, 2 hours before the cutover.
     await pool.query(
       `insert into metric_points (project, metric_name, ts, kind, value, attributes, resource)
@@ -52,7 +53,7 @@ describe.skipIf(!DATABASE_URL)("0008 metric series (integration, requires DATABA
   afterAll(async () => {
     await pool.end();
     await admin.query(`drop database ${dbName}`);
-    await admin.query("drop role if exists sens_series_ro");
+    await admin.query(`drop role if exists ${roRole}`);
     await admin.end();
   });
 
@@ -75,7 +76,7 @@ describe.skipIf(!DATABASE_URL)("0008 metric series (integration, requires DATABA
   test("the read-only role can read the view", async () => {
     const client = await pool.connect();
     try {
-      await client.query("set role sens_series_ro");
+      await client.query(`set role ${roRole}`);
       const { rows } = await client.query("select count(*)::int n from metric_points where project = 'p'");
       expect(rows[0].n).toBe(2);
       // golem's continuous-project query.

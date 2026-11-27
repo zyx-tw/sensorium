@@ -11,6 +11,8 @@ const DATABASE_URL = process.env.DATABASE_URL;
 
 describe.skipIf(!DATABASE_URL)("0006 partitions spans and logs (integration, requires DATABASE_URL)", () => {
   const dbName = `sens_mig_${Date.now()}`;
+  const roRole = `${dbName}_ro`;
+  const rwRole = `${dbName}_rw`;
   let admin: Pool;
   let pool: Pool;
   const day = 86_400_000;
@@ -25,10 +27,10 @@ describe.skipIf(!DATABASE_URL)("0006 partitions spans and logs (integration, req
     pool = new Pool({ connectionString: url.toString() });
     await runMigrations(pool, { until: "0005_spans_start_index.sql" });
     await createProject(pool, "p", "token-p");
-    await pool.query(`do $$ begin create role sens_mig_ro; exception when duplicate_object then null; end $$`);
-    await pool.query("grant select on spans, logs to sens_mig_ro");
-    await pool.query(`do $$ begin create role sens_mig_rw; exception when duplicate_object then null; end $$`);
-    await pool.query("grant select, insert on logs to sens_mig_rw");
+    await pool.query(`do $$ begin create role ${roRole}; exception when duplicate_object then null; end $$`);
+    await pool.query(`grant select on spans, logs to ${roRole}`);
+    await pool.query(`do $$ begin create role ${rwRole}; exception when duplicate_object then null; end $$`);
+    await pool.query(`grant select, insert on logs to ${rwRole}`);
     // A producer clock in 2100 must not make the migration build thousands of partitions.
     await pool.query(
       `insert into spans (project, trace_id, span_id, name, kind, start_ts, end_ts, duration_ms)
@@ -54,8 +56,8 @@ describe.skipIf(!DATABASE_URL)("0006 partitions spans and logs (integration, req
   afterAll(async () => {
     await pool.end();
     await admin.query(`drop database ${dbName}`);
-    await admin.query("drop role if exists sens_mig_ro");
-    await admin.query("drop role if exists sens_mig_rw");
+    await admin.query(`drop role if exists ${roRole}`);
+    await admin.query(`drop role if exists ${rwRole}`);
     await admin.end();
   });
 
@@ -80,7 +82,7 @@ describe.skipIf(!DATABASE_URL)("0006 partitions spans and logs (integration, req
   test("a role that could insert logs still can (the new id sequence is granted)", async () => {
     const client = await pool.connect();
     try {
-      await client.query("set role sens_mig_rw");
+      await client.query(`set role ${rwRole}`);
       await client.query(`insert into logs (project, ts, body) values ('p', now(), 'as rw')`);
     } finally {
       await client.query("reset role");
@@ -90,7 +92,7 @@ describe.skipIf(!DATABASE_URL)("0006 partitions spans and logs (integration, req
 
   test("the read-only role can still read both tables", async () => {
     const { rows } = await pool.query(
-      `select has_table_privilege('sens_mig_ro', 'spans', 'select') s, has_table_privilege('sens_mig_ro', 'logs', 'select') l`,
+      `select has_table_privilege('${roRole}', 'spans', 'select') s, has_table_privilege('${roRole}', 'logs', 'select') l`,
     );
     expect(rows[0]).toEqual({ s: true, l: true });
   });
