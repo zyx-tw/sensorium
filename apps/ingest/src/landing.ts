@@ -3,13 +3,14 @@ import path from "node:path";
 /**
  * The page sensorium.zyx.tw answers / with: what sensorium is, what it does,
  * how to deploy, use and configure it (the README's sections, shorter), in the
- * frame every zyx.tw site shares (the zyx mark top left, mirrored on hover;
- * GitHub top right; Privacy and Terms bottom left; the copyright bottom right;
- * all 14 px on 20 px lines, 20 px in from the corners, each with its tip, see
- * TIPS). The column, type sizes (20 px body text on a phone, 16 px from 640 px
- * up) and dark tokens are www.zyx.tw's, and the font is the same Inter subset
- * (static/README.md). An agent that asks for text/markdown, or opens
- * /index.md, gets the same page as Markdown: both are rendered from PAGE.
+ * frame every zyx.tw site shares, as ui.zyx.tw's DESIGN.md sets it: the zyx
+ * mark top left, mirrored on hover; GitHub top right; Privacy and Terms bottom
+ * left; the copyright bottom right, each 12px (--gutter) in from the viewport's
+ * corner with its tip (TIPS). One monospace face (Maple Mono NF CN, the same
+ * subset as ui.zyx.tw, static/README.md), the four type sizes, soft grayscale
+ * tokens, square fills, glyph-framed tips and text that decodes in (SCRIPT).
+ * An agent that asks for text/markdown, or opens /index.md, gets the same page
+ * as Markdown: both are rendered from PAGE.
  *
  * Only an instance started with SENSORIUM_LANDING=1 serves it; the others
  * keep answering / with the JSON 404.
@@ -17,9 +18,10 @@ import path from "node:path";
 
 const STATIC = path.join(import.meta.dirname, "..", "static");
 
-/** Files under static/, by path: the font and the favicon every zyx.tw site uses. */
+/** Files under static/, by path: the fonts and the favicon every zyx.tw site uses. */
 const FILES: Record<string, { file: string; type: string }> = {
-  "/fonts/InterVariable.woff2": { file: "InterVariable.woff2", type: "font/woff2" },
+  "/fonts/MapleMonoNFCN-Regular.woff2": { file: "MapleMonoNFCN-Regular.woff2", type: "font/woff2" },
+  "/fonts/MapleMonoNFCN-SemiBold.woff2": { file: "MapleMonoNFCN-SemiBold.woff2", type: "font/woff2" },
   "/favicon.ico": { file: "favicon.ico", type: "image/x-icon" },
 };
 
@@ -137,30 +139,57 @@ const inline = (text: string) =>
     .join("");
 
 /**
- * The corner tips every zyx.tw site shows (CornerTip in www.zyx.tw's
- * packages/ui), saying what an item's label leaves out. A tip opens at once on
- * hover and on keyboard focus of a link, toward the page and lined up with the
- * item's outer edge, and stays open while the pointer is on it (STYLE): a
- * bridge as wide as the item spans the 4 px gap, beneath the link's own hit
- * area where they overlap, so it never takes a click meant for a link. Like
- * www.zyx.tw's, it is visual only.
+ * The corner tips every zyx.tw site shows (CornerTip in ui.zyx.tw), saying
+ * what an item's label leaves out. A tip is a small terminal window: opaque,
+ * framed in box-drawing glyphs (FRAME), lowercase, no arrow. It opens at once
+ * on hover and on keyboard focus of a link, 8px toward the page and lined up
+ * with the item's outer edge, and stays open while the pointer is on it
+ * (STYLE): a bridge as wide as the item spans the gap. Like ui.zyx.tw's, it is
+ * visual only.
  */
 const TIPS = {
   mark: "www.zyx.tw",
   github: "zyx1121/sensorium",
-  privacy: "What every zyx.tw site stores and logs",
-  terms: "The rules for every zyx.tw site",
+  privacy: "What we store",
+  terms: "The rules",
   copyright: "Loki",
 };
 
-const tip = (text: string) => `<span class="tip" aria-hidden="true">${escape(text)}</span>`;
+/** The glyph frame's cells, as FrameEdges in ui.zyx.tw draws them. */
+const FRAME =
+  '<span class="frame" aria-hidden="true"><span data-edge="top-left"></span><span><span data-edge="fill"></span></span><span data-edge="top-right"></span><span data-edge="side"></span><span></span><span data-edge="side"></span><span data-edge="bottom-left"></span><span><span data-edge="fill"></span></span><span data-edge="bottom-right"></span></span>';
+
+const tip = (text: string) => `<span class="tip" aria-hidden="true">${escape(text)}${FRAME}</span>`;
 
 /**
- * Closes the corner tips as Base UI does on www.zyx.tw: Escape or a press
- * closes the open one until the pointer enters it again or focus leaves it,
- * and a touch never opens one. The CSP allows it by its hash.
+ * The page's one script, allowed by its hash in the CSP:
+ *
+ * - The corner tips close as Base UI's do: Escape or a press closes the open
+ *   one until the pointer enters it again or focus leaves it, and a touch
+ *   never opens one.
+ * - The d key switches light and dark, kept in localStorage as next-themes
+ *   keeps it on the other zyx.tw sites (key "theme").
+ * - The text decodes in as PageDecode does: each row starts scrambled and
+ *   resolves left to right at 50ms a character (a line within 600ms), rows
+ *   25ms apart in document order, the top corners row 0 and the bottom ones
+ *   row 15. Glyphs keep their cell, so nothing moves. A click or a key shows
+ *   the page whole, and reduced motion skips it.
  */
-const SCRIPT = `for(const t of document.querySelectorAll(".tipped")){t.addEventListener("pointerenter",e=>t.classList.toggle("off",e.pointerType==="touch"));t.addEventListener("pointerdown",()=>t.classList.add("off"));t.addEventListener("focusout",()=>t.classList.remove("off"))}addEventListener("keydown",e=>{if(e.key==="Escape")for(const t of document.querySelectorAll(".tipped:hover,.tipped:focus-within"))t.classList.add("off")})`;
+const SCRIPT = `(()=>{const d=document,h=d.documentElement;try{const t=localStorage.getItem("theme");if(t)h.classList.toggle("dark",t!=="light")}catch{}
+for(const t of d.querySelectorAll(".tipped")){t.addEventListener("pointerenter",e=>t.classList.toggle("off",e.pointerType==="touch"));t.addEventListener("pointerdown",()=>t.classList.add("off"));t.addEventListener("focusout",()=>t.classList.remove("off"))}
+addEventListener("keydown",e=>{if(e.key==="Escape")for(const t of d.querySelectorAll(".tipped:hover,.tipped:focus-within"))t.classList.add("off");if(e.key==="d"&&!e.metaKey&&!e.ctrlKey&&!e.altKey&&!e.repeat){const dark=h.classList.toggle("dark");try{localStorage.setItem("theme",dark?"dark":"light")}catch{}}});
+if(matchMedia("(prefers-reduced-motion: reduce)").matches)return;
+const G=Array.from("#$%&*+<=>@^~"),L=/[\\p{L}\\p{N}]/u,lines=[];let row=0;
+const add=(el,r)=>{const w=d.createTreeWalker(el,NodeFilter.SHOW_TEXT);for(let n=w.nextNode();n;n=w.nextNode()){if(!n.data.trim()||n.parentElement.closest(".tip"))continue;const c=Array.from(n.data);lines.push({n,t:n.data,c,k:c.map(x=>L.test(x)),delay:r*25,step:Math.min(50,600/c.length)})}};
+for(const el of d.querySelectorAll(".corner.tl,.corner.tr"))add(el,0);
+for(const el of d.querySelectorAll("main h1,main .sub,main h2,main p,main dt,main dd,main pre"))if(!el.parentElement.closest("main p,main pre"))add(el,++row);
+for(const el of d.querySelectorAll(".corner.bl,.corner.br"))add(el,15);
+const draw=(l,r)=>l.c.map((x,i)=>i<r||!l.k[i]?x:G[Math.random()*G.length|0]).join("");
+for(const l of lines)l.n.data=draw(l,0);
+let raf=0,start,last=-1;const done=()=>{cancelAnimationFrame(raf);for(const l of lines)l.n.data=l.t;removeEventListener("pointerdown",done);removeEventListener("keydown",done)};
+addEventListener("pointerdown",done);addEventListener("keydown",done);
+const f=now=>{start??=now;const el=now-start,tick=el/50|0,re=tick!==last;last=tick;let run=false;for(const l of lines){const r=el<l.delay?0:(el-l.delay)/l.step|0;if(r>=l.c.length){if(l.n.data!==l.t)l.n.data=l.t;continue}run=true;if(re)l.n.data=draw(l,r)}run?raf=requestAnimationFrame(f):done()};
+raf=requestAnimationFrame(f)})()`;
 
 function block(b: Block): string {
   if ("p" in b) return `<p>${inline(b.p)}</p>`;
@@ -185,71 +214,86 @@ function markdownBlock(b: Block): string {
     .join("\n\n");
 }
 
+// ui.zyx.tw's tokens (packages/ui/src/styles/globals.css): dark first on near
+// black, light on warm paper, 16/24 body, 24/32 title, 14/20 caption, square
+// fills and 12px corners. Glyph frames follow its "Glyph frames" section.
 const STYLE = `
-@font-face{font-family:Inter;src:url(/fonts/InterVariable.woff2) format("woff2");font-weight:100 900;font-display:swap}
-:root{color-scheme:dark;--background:oklch(0 0 0);--foreground:oklch(0.985 0 0);--muted:oklch(0.269 0 0);--muted-foreground:oklch(0.65 0 0);--border:oklch(1 0 0 / 10%);--ring:oklch(0.556 0 0)}
+@font-face{font-family:"Maple Mono NF CN";src:url(/fonts/MapleMonoNFCN-Regular.woff2) format("woff2");font-weight:400;font-display:swap}
+@font-face{font-family:"Maple Mono NF CN";src:url(/fonts/MapleMonoNFCN-SemiBold.woff2) format("woff2");font-weight:500 600;font-display:swap}
+:root{color-scheme:light;--background:oklch(0.97 0.005 85);--foreground:oklch(0.25 0 0);--muted:oklch(0.93 0.005 85);--muted-foreground:oklch(0.52 0 0);--border:oklch(0.89 0.005 85);--ring:oklch(0.25 0 0);--gutter:12px}
+.dark{color-scheme:dark;--background:oklch(0.17 0 0);--foreground:oklch(0.88 0 0);--muted:oklch(0.26 0 0);--muted-foreground:oklch(0.62 0 0);--border:oklch(1 0 0 / 10%);--ring:oklch(0.88 0 0)}
 *{box-sizing:border-box;margin:0;padding:0}
-html{font-family:Inter,ui-sans-serif,system-ui,sans-serif;font-feature-settings:"liga" 1,"calt" 1,"ss01" 1,"zero" 1;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;scrollbar-gutter:stable}
-body{background:var(--background);color:var(--foreground);font-size:14px;line-height:20px}
-main{margin:0 auto;width:100%;max-width:36rem;padding:120px 20px 100px}
-@media (min-width:1024px){main{max-width:48rem}}
-@media (min-width:1536px){main{max-width:64rem}}
+html{font-family:"Maple Mono NF CN",ui-monospace,SFMono-Regular,Menlo,monospace;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;scrollbar-gutter:stable}
+body{background:var(--background);color:var(--foreground);font-size:16px;line-height:24px}
+::selection{background:var(--foreground);color:var(--background)}
+main{margin:0 auto;width:100%;max-width:576px;padding:120px var(--gutter) 100px}
+@media (min-width:1024px){main{max-width:768px}}
+@media (min-width:1536px){main{max-width:1024px}}
 h1{font-size:24px;line-height:32px;font-weight:500}
 .sub{margin-top:12px;color:var(--muted-foreground)}
 section{margin-top:60px}
 section:first-of-type{margin-top:100px}
-h2{font-size:14px;line-height:20px;font-weight:500}
+h2{font-size:16px;line-height:24px;font-weight:500;text-transform:uppercase;font-variant-ligatures:none}
+h2::before{content:"[" / ""}h2::after{content:"]" / ""}
 section p{margin-top:12px;text-wrap:pretty}
-.rows{margin-top:20px;display:grid;grid-template-columns:7rem 1fr;gap:12px 20px}
+.rows{margin-top:20px;display:grid;grid-template-columns:12ch minmax(0,1fr);gap:12px 0}
 .rows dt{color:var(--muted-foreground)}
 .steps{margin-top:20px;list-style:none;counter-reset:step;display:flex;flex-direction:column;row-gap:20px}
-.steps li{counter-increment:step;display:grid;grid-template-columns:28px minmax(0,1fr)}
+.steps li{counter-increment:step;display:grid;grid-template-columns:3ch minmax(0,1fr)}
 .steps li::before{content:counter(step);color:var(--muted-foreground);font-variant-numeric:tabular-nums}
 .steps li>*{grid-column:2}
 .steps p{margin-top:0}
-code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:14px}
-:not(pre)>code{background:var(--muted);padding:1px 4px;border-radius:4px;overflow-wrap:anywhere}
-pre{margin-top:12px;padding:12px 16px;border:1px solid var(--border);border-radius:8px;overflow-x:auto;line-height:1.45}
-.corner{position:fixed;z-index:50;display:flex;align-items:center;gap:16px;font-size:14px;line-height:20px}
-.tl{top:20px;left:20px}.tr{top:20px;right:20px}.bl{bottom:20px;left:20px}.br{right:20px;bottom:20px}
-a{color:inherit;text-decoration:none;border-radius:6px;outline-offset:4px}
-a:focus-visible{outline:2px solid color-mix(in oklab,var(--ring) 50%,transparent)}
-.link{position:relative;color:var(--muted-foreground);transition:color 150ms cubic-bezier(0.4,0,0.2,1)}
+code{font-family:inherit}
+:not(pre)>code{background:var(--muted);padding:0 4px;overflow-wrap:anywhere}
+pre{margin-top:12px;padding:24px 0;border-top:1px solid var(--border);border-bottom:1px solid var(--border);overflow-x:auto;font-size:14px;line-height:24px;color:var(--muted-foreground)}
+main a{text-decoration:underline;text-underline-offset:4px}
+main a:hover,main a:focus-visible{background:var(--foreground);color:var(--background);text-decoration:none;outline:none;box-shadow:0 0 0 2px var(--foreground)}
+a{color:inherit;text-decoration:none;outline-offset:4px}
+a:focus-visible{outline:2px solid var(--ring)}
+.corner{position:fixed;z-index:50;display:flex;align-items:center;gap:16px}
+.tl{top:var(--gutter);left:var(--gutter)}.tr{top:var(--gutter);right:var(--gutter)}.bl{bottom:var(--gutter);left:var(--gutter)}.br{right:var(--gutter);bottom:var(--gutter)}
+.link{position:relative;text-transform:uppercase;font-variant-ligatures:none;color:var(--muted-foreground);transition:color 150ms ease-out}
 .link::after{content:"";position:absolute;left:-8px;right:-8px;top:50%;height:24px;transform:translateY(-50%)}
 .link:hover{color:var(--foreground)}
+.mark{display:block}
 .mark svg{display:block;height:20px;width:auto;fill:currentColor}
 .mark:hover svg{transform:scaleX(-1)}
-@media (prefers-reduced-motion:no-preference){.mark svg{transition:transform 300ms cubic-bezier(0.4,0,0.2,1)}}
+@media (prefers-reduced-motion:no-preference){.mark svg{transition:transform 200ms ease-out}}
 .br p{color:var(--muted-foreground);font-variant-numeric:tabular-nums}
 .tipped{position:relative;display:flex}
-.tl .tipped,.tr .tipped{--tip-from:-8px}.bl .tipped,.br .tipped{--tip-from:8px}
-.tip,.tipped::after{position:absolute;z-index:50;pointer-events:none;background:var(--foreground);opacity:0;visibility:hidden}
-.tip{width:max-content;max-width:320px;padding:6px 12px;border-radius:8px;color:var(--background);font-size:12px;line-height:16px;font-weight:400;font-variant-numeric:normal;transform:scale(.95)}
-.tipped::before{content:"";position:absolute;left:0;right:0;height:4px;pointer-events:none}
-.tipped::after{content:"";left:calc(50% - 5px);width:10px;height:10px;border-radius:2px;transform:rotate(45deg)}
-.tl .tip,.tr .tip{top:calc(100% + 4px)}.tl .tipped::before,.tr .tipped::before{top:100%}.tl .tipped::after,.tr .tipped::after{top:calc(100% + 1px)}
-.bl .tip,.br .tip{bottom:calc(100% + 4px)}.bl .tipped::before,.br .tipped::before{bottom:100%}.bl .tipped::after,.br .tipped::after{bottom:calc(100% + 1px)}
-.tl .tip{left:0;transform-origin:top left}.tr .tip{right:0;transform-origin:top right}.bl .tip{left:0;transform-origin:bottom left}.br .tip{right:0;transform-origin:bottom right}
-@media (hover:hover){.tipped:hover>.tip,.tipped:hover::after{opacity:1;visibility:visible;transition:visibility 0s}.tipped:hover>.tip{transform:none;pointer-events:auto}.tipped:hover::before{pointer-events:auto}}
-.tipped:has(>a:focus-visible)>.tip,.tipped:has(>a:focus-visible)::after{opacity:1;visibility:visible;transition:visibility 0s}.tipped:has(>a:focus-visible)>.tip{transform:none}
-.tipped.off>.tip,.tipped.off::after{opacity:0!important;visibility:hidden!important;pointer-events:none!important}.tipped.off>.tip{transform:scale(.95)!important}
-@media (prefers-reduced-motion:no-preference){.tip,.tipped::after{transition:opacity 150ms ease,transform 150ms ease,visibility 0s linear 150ms}.tipped.off>.tip,.tipped.off::after{transition:opacity 150ms ease,transform 150ms ease,visibility 0s linear 150ms!important}.tipped:hover>.tip,.tipped:has(>a:focus-visible)>.tip{animation:tip-in 150ms ease}.tipped:hover::after,.tipped:has(>a:focus-visible)::after{animation:tip-arrow-in 150ms ease}}
-@keyframes tip-in{from{opacity:0;transform:translateY(var(--tip-from)) scale(.95)}}
-@keyframes tip-arrow-in{from{opacity:0;transform:translateY(var(--tip-from)) rotate(45deg)}}
+.tip{position:absolute;z-index:50;display:flex;align-items:center;width:max-content;max-width:320px;min-height:40px;padding:8px 12px;background:var(--background);color:var(--foreground);text-transform:lowercase;font-variant-numeric:normal;font-weight:400;pointer-events:none;opacity:0;visibility:hidden}
+.tipped::before{content:"";position:absolute;left:0;right:0;height:8px;pointer-events:none}
+.tl .tip,.tr .tip{top:calc(100% + 8px)}.tl .tipped::before,.tr .tipped::before{top:100%}
+.bl .tip,.br .tip{bottom:calc(100% + 8px)}.bl .tipped::before,.br .tipped::before{bottom:100%}
+.tl .tip,.bl .tip{left:0}.tr .tip,.br .tip{right:0}
+@media (hover:hover){.tipped:hover>.tip{opacity:1;visibility:visible;pointer-events:auto;transition:visibility 0s}.tipped:hover::before{pointer-events:auto}}
+.tipped:has(>a:focus-visible)>.tip{opacity:1;visibility:visible;transition:visibility 0s}
+.tipped.off>.tip{opacity:0!important;visibility:hidden!important;pointer-events:none!important}
+@media (prefers-reduced-motion:no-preference){.tip{transition:opacity 200ms ease-out,visibility 0s linear 200ms}.tipped.off>.tip{transition:opacity 200ms ease-out,visibility 0s linear 200ms!important}.tipped:hover>.tip,.tipped:has(>a:focus-visible)>.tip{animation:tip-in 200ms ease-out}}
+@keyframes tip-in{from{opacity:0}}
+.frame{position:absolute;inset:-10px -0.5ch;z-index:1;display:grid;grid-template-columns:1ch minmax(0,1fr) 1ch;grid-template-rows:20px minmax(0,1fr) 20px;font-size:16px;font-weight:400;line-height:20px;white-space:pre;text-transform:none;color:var(--muted-foreground);pointer-events:none;user-select:none}
+.frame>*{display:flex;min-width:0}
+[data-edge="fill"]{flex:1;min-width:0;margin-inline:-1px;overflow:hidden}
+[data-edge="top-left"]::before{content:"╭" / ""}[data-edge="top-right"]::before{content:"╮" / ""}[data-edge="bottom-left"]::before{content:"╰" / ""}[data-edge="bottom-right"]::before{content:"╯" / ""}
+[data-edge="fill"]::before{content:"────────────────────────────────────────────────" / ""}
+[data-edge="side"]{display:block;margin-block:-1px;overflow:hidden;word-break:break-all;white-space:normal}
+[data-edge="side"]::before{content:"││││││││││││" / ""}
 .fade{pointer-events:none;position:fixed;left:0;right:0;z-index:40;height:64px;background:transparent;-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);-webkit-mask-image:linear-gradient(var(--edge-direction),#000 35%,transparent);mask-image:linear-gradient(var(--edge-direction),#000 35%,transparent)}
 .fade.top{top:0;--edge-direction:to bottom}
 .fade.bottom{bottom:0;--edge-direction:to top}
+@media (prefers-reduced-motion:reduce){*,::before,::after{animation-duration:1ms!important;transition-duration:1ms!important}}
 `;
 
 function html(year: number): string {
   return `<!doctype html>
-<html lang="en">
+<html lang="en" class="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${PAGE.title}</title>
 <meta name="description" content="${escape(PAGE.tagline)}">
 <link rel="icon" href="/favicon.ico">
+<link rel="preload" href="/fonts/MapleMonoNFCN-Regular.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="alternate" type="text/markdown" href="/index.md">
 <style>${STYLE}</style>
 </head>

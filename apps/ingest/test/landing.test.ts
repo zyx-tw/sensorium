@@ -41,11 +41,11 @@ describe("landing page", () => {
     for (const tip of [
       "www.zyx.tw",
       "zyx1121/sensorium",
-      "What every zyx.tw site stores and logs",
-      "The rules for every zyx.tw site",
+      "What we store",
+      "The rules",
       "Loki",
     ]) {
-      expect(body).toContain(`<span class="tip" aria-hidden="true">${tip}</span>`);
+      expect(body).toContain(`<span class="tip" aria-hidden="true">${tip}<span class="frame" aria-hidden="true">`);
     }
   });
 
@@ -83,7 +83,7 @@ describe("landing page", () => {
     expect(res.headers.get("content-security-policy")).toContain(`'sha256-${hash}'`);
   });
 
-  test("the CSP hash matches the page's one <script> block, the corner tips' closing", async () => {
+  test("the CSP hash matches the page's one <script> block, the tips, the theme key and the decode", async () => {
     const res = await get(on, "/");
     const scripts = [...(await res.text()).matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]!);
     expect(scripts.length).toBe(1);
@@ -110,7 +110,7 @@ describe("landing page", () => {
   test("HEAD gets a GET's headers and length without the body", async () => {
     const server = Bun.serve({ port: 0, fetch: on.fetch });
     try {
-      for (const path of ["/", "/index.md", "/favicon.ico", "/fonts/InterVariable.woff2"]) {
+      for (const path of ["/", "/index.md", "/favicon.ico", "/fonts/MapleMonoNFCN-Regular.woff2", "/fonts/MapleMonoNFCN-SemiBold.woff2"]) {
         const full = await fetch(new URL(path, server.url));
         const length = (await full.arrayBuffer()).byteLength;
         const head = await fetch(new URL(path, server.url), { method: "HEAD" });
@@ -125,11 +125,13 @@ describe("landing page", () => {
     }
   });
 
-  test("serves the font and the favicon", async () => {
-    const font = await get(on, "/fonts/InterVariable.woff2");
-    expect(font.status).toBe(200);
-    expect(font.headers.get("content-type")).toBe("font/woff2");
-    expect(new Uint8Array(await font.arrayBuffer()).slice(0, 4)).toEqual(new TextEncoder().encode("wOF2"));
+  test("serves the fonts and the favicon", async () => {
+    for (const weight of ["Regular", "SemiBold"]) {
+      const font = await get(on, `/fonts/MapleMonoNFCN-${weight}.woff2`);
+      expect(font.status).toBe(200);
+      expect(font.headers.get("content-type")).toBe("font/woff2");
+      expect(new Uint8Array(await font.arrayBuffer()).slice(0, 4)).toEqual(new TextEncoder().encode("wOF2"));
+    }
 
     const icon = await get(on, "/favicon.ico");
     expect(icon.status).toBe(200);
