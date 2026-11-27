@@ -28,11 +28,15 @@ update projects set last_metric_at = now() where name in (select project from t 
 
 alter table metric_points rename to metric_points_legacy;
 
+-- The one definition of a series' identity. jsonb's text form is canonical
+-- (keys sorted, duplicates dropped), so key order never splits a series.
+create function metric_series_identity(metric_name text, kind text, attributes jsonb, resource jsonb)
+  returns bytea language sql immutable parallel safe
+  return sha256(convert_to(jsonb_build_array(metric_name, kind, attributes, resource)::text, 'UTF8'));
+
 create table metric_series (
   id bigint generated always as identity primary key,
   project text not null references projects (name),
-  -- sha256 over the canonical JSON of [metric_name, kind, attributes, resource],
-  -- computed by ingest (seriesIdentity in src/queries.ts).
   identity bytea not null,
   metric_name text not null,
   kind text not null check (kind in ('gauge', 'sum', 'histogram')),
@@ -67,6 +71,12 @@ create table metric_rollup_progress (
 );
 insert into metric_rollup_progress (rolled_until) values (date_bin('5 minutes', now(), timestamptz '2000-01-01'));
 
+-- Buckets that got points after they were rolled up (a producer that sends
+-- late, or a backfill). Ingest adds them; the next rollup recomputes and clears them.
+create table metric_rollup_dirty (
+  bucket timestamptz primary key
+);
+
 -- Today and 7 days ahead, as UTC days (partitionBounds in src/retention.ts).
 do $$
 declare
@@ -95,6 +105,29 @@ create view metric_points as
   union all
   select project, metric_name, ts, kind, value, attributes, resource
     from metric_points_legacy;
+
+-- An ingest from before 0008 (still running during a deploy, or a rolled-back
+-- image) inserts into metric_points. Route those rows to the new tables.
+create function metric_points_insert() returns trigger language plpgsql as $$
+declare
+  sid bigint;
+  ident bytea := metric_series_identity(new.metric_name, new.kind, coalesce(new.attributes, '{}'), coalesce(new.resource, '{}'));
+begin
+  select id into sid from metric_series where project = new.project and identity = ident;
+  if sid is null then
+    insert into metric_series (project, identity, metric_name, kind, attributes, resource)
+      values (new.project, ident, new.metric_name, new.kind, coalesce(new.attributes, '{}'), coalesce(new.resource, '{}'))
+      on conflict (project, identity) do nothing;
+    select id into sid from metric_series where project = new.project and identity = ident;
+  end if;
+  insert into metric_samples (series_id, ts, value) values (sid, new.ts, new.value);
+  if new.ts < now() - interval '15 minutes' then
+    insert into metric_rollup_dirty (bucket) values (date_bin('5 minutes', new.ts, timestamptz '2000-01-01')) on conflict do nothing;
+  end if;
+  return new;
+end $$;
+create trigger metric_points_insert instead of insert on metric_points
+  for each row execute function metric_points_insert();
 
 -- Whoever could read the old table can read the view (golem_ro). The view runs
 -- with its owner's rights, so no grant on the new tables is needed for that.

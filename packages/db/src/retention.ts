@@ -1,5 +1,5 @@
 import type { Pool } from "pg";
-import { rollUpMetrics, rolledUntil } from "./metrics.js";
+import { oldestDirtyBucket, rollUpMetrics, rolledUntil } from "./metrics.js";
 
 /**
  * Age-based expiry for the three signal tables.
@@ -291,7 +291,10 @@ export async function runRetention(
 ): Promise<RetentionReport> {
   // Rollups first: a samples partition is dropped only once it is rolled up.
   const rollup = await rollUpMetrics(pool, now);
-  const rolled = await rolledUntil(pool);
+  // Samples are kept until they are rolled up: up to rolled_until, and before any bucket still marked dirty.
+  const dirty = await oldestDirtyBucket(pool);
+  const rolledAt = await rolledUntil(pool);
+  const rolled = dirty && dirty < rolledAt ? dirty : rolledAt;
   const tables: RetentionReport["tables"] = {};
   for (const table of PARTITIONED_TABLES) {
     // Order matters: rescue before dropping, so a rescued row from an expired

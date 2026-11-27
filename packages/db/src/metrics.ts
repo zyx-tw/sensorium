@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import type { MetricPointRow } from "@sensorium/core";
 import type { Pool } from "pg";
 
@@ -20,7 +19,7 @@ const ROLLUP_LATE_MS = 15 * 60_000;
 const ROLLUP_CHUNK_MS = 6 * 3_600_000;
 const BUCKET_ORIGIN = "2000-01-01T00:00:00Z";
 
-/** JSON with object keys sorted at every level, so key order never splits a series. */
+/** JSON with object keys sorted at every level: the cache key, so key order never misses the cache. */
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
   if (value && typeof value === "object") {
@@ -32,9 +31,8 @@ function canonical(value: unknown): string {
   return JSON.stringify(value ?? null);
 }
 
-/** sha256 over the canonical [name, kind, attributes, resource]; unique per project in metric_series. */
-export function seriesIdentity(row: Pick<MetricPointRow, "metricName" | "kind" | "attributes" | "resource">): Buffer {
-  return createHash("sha256").update(canonical([row.metricName, row.kind, row.attributes, row.resource])).digest();
+function cacheKey(row: MetricPointRow): string {
+  return canonical([row.project, row.metricName, row.kind, row.attributes, row.resource]);
 }
 
 const seriesCaches = new WeakMap<Pool, Map<string, string>>();
@@ -67,53 +65,115 @@ function cacheFor(pool: Pool): Map<string, string> {
   return cache;
 }
 
-/** Series ids for the rows, creating the series that do not exist yet. Keyed by project + identity hex. */
-async function resolveSeries(pool: Pool, rows: MetricPointRow[], identities: Buffer[]): Promise<string[]> {
+/**
+ * Series ids for the rows, creating the series that do not exist yet. The
+ * database computes the identity (metric_series_identity in migration 0008), so
+ * ingest and the compatibility trigger agree on it. Ids for this batch live in
+ * a map of the call's own, so a cache cleared by another request cannot lose them.
+ */
+async function resolveSeries(pool: Pool, rows: MetricPointRow[]): Promise<string[]> {
   const cache = cacheFor(pool);
-  const keys = rows.map((row, i) => `${row.project}\u0000${identities[i]!.toString("hex")}`);
+  const keys = rows.map(cacheKey);
+  const resolved = new Map<string, string>();
   const missing = new Map<string, number>();
   keys.forEach((key, i) => {
-    if (!cache.has(key) && !missing.has(key)) missing.set(key, i);
+    const id = cache.get(key);
+    if (id !== undefined) resolved.set(key, id);
+    else if (!missing.has(key)) missing.set(key, i);
   });
 
   if (missing.size > 0) {
     if (cache.size + missing.size > SERIES_CACHE_LIMIT) cache.clear();
     // Sorted, so two batches that create the same series lock them in the same order.
     const todo = [...missing.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-    const perStatement = Math.floor(MAX_BIND_PARAMETERS / 6);
+    const perStatement = Math.floor(MAX_BIND_PARAMETERS / 5);
     for (let start = 0; start < todo.length; start += perStatement) {
       const chunk = todo.slice(start, start + perStatement);
-      const values: unknown[] = [];
-      const tuples = chunk.map(([, i], n) => {
-        const row = rows[i]!;
-        values.push(row.project, identities[i], row.metricName, row.kind, JSON.stringify(row.attributes), JSON.stringify(row.resource));
-        const b = n * 6;
-        return `($${b + 1}, $${b + 2}, $${b + 3}, $${b + 4}, $${b + 5}, $${b + 6})`;
-      });
-      await pool.query(
-        `insert into metric_series (project, identity, metric_name, kind, attributes, resource)
-         values ${tuples.join(", ")} on conflict (project, identity) do nothing`,
-        values,
+      const columns = {
+        project: chunk.map(([, i]) => rows[i]!.project),
+        name: chunk.map(([, i]) => rows[i]!.metricName),
+        kind: chunk.map(([, i]) => rows[i]!.kind),
+        attributes: chunk.map(([, i]) => JSON.stringify(rows[i]!.attributes ?? {})),
+        resource: chunk.map(([, i]) => JSON.stringify(rows[i]!.resource ?? {})),
+      };
+      // One statement: insert the new series, then read every id back in input order.
+      const { rows: found } = await pool.query<{ n: number; id: string }>(
+        `with input as (
+           select n::int, project, name, kind, attributes::jsonb as attributes, resource::jsonb as resource,
+                  metric_series_identity(name, kind, attributes::jsonb, resource::jsonb) as identity
+             from unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[]) with ordinality
+                  as t(project, name, kind, attributes, resource, n)
+         ), created as (
+           insert into metric_series (project, identity, metric_name, kind, attributes, resource)
+           select project, identity, name, kind, attributes, resource from input order by identity
+           on conflict (project, identity) do nothing
+           returning id, project, identity
+         )
+         select i.n, coalesce(c.id, s.id) as id
+           from input i
+           left join created c on c.project = i.project and c.identity = i.identity
+           left join metric_series s on s.project = i.project and s.identity = i.identity`,
+        [columns.project, columns.name, columns.kind, columns.attributes, columns.resource],
       );
-      const { rows: found } = await pool.query<{ id: string; project: string; identity: Buffer }>(
-        `select id, project, identity from metric_series
-          where (project, identity) in (select * from unnest($1::text[], $2::bytea[]))`,
-        [chunk.map(([, i]) => rows[i]!.project), chunk.map(([, i]) => identities[i])],
-      );
-      for (const r of found) cache.set(`${r.project}\u0000${r.identity.toString("hex")}`, r.id);
+      const late: number[] = [];
+      for (const r of found) {
+        if (r.id === null) late.push(r.n);
+        else {
+          const key = chunk[r.n - 1]![0];
+          resolved.set(key, r.id);
+          cache.set(key, r.id);
+        }
+      }
+      // A series another batch committed while this statement ran is not in its
+      // snapshot: the insert skipped it and the join could not see it. A new
+      // statement does.
+      if (late.length > 0) {
+        const pick = <T>(xs: T[]) => late.map((n) => xs[n - 1]!);
+        const { rows: again } = await pool.query<{ n: number; id: string }>(
+          `select t.n::int, s.id
+             from unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::int[])
+                  as t(project, name, kind, attributes, resource, n)
+             join metric_series s on s.project = t.project
+              and s.identity = metric_series_identity(t.name, t.kind, t.attributes::jsonb, t.resource::jsonb)`,
+          [pick(columns.project), pick(columns.name), pick(columns.kind), pick(columns.attributes), pick(columns.resource), late],
+        );
+        for (const r of again) {
+          const key = chunk[r.n - 1]![0];
+          resolved.set(key, r.id);
+          cache.set(key, r.id);
+        }
+      }
     }
   }
 
   return keys.map((key) => {
-    const id = cache.get(key);
+    const id = resolved.get(key);
     if (id === undefined) throw new Error("metric series was not created");
     return id;
   });
 }
 
+/**
+ * A point this much older than now may land in a bucket the last rollup
+ * finished. The next rollup starts at least 20 minutes back (rolled_until trails
+ * now by 5, and it recomputes 15 more), so 15 leaves a margin.
+ */
+const LATE_MS = 15 * 60_000;
+
+/** Buckets of points old enough that the next rollup would not reach them on its own. */
+function lateBuckets(rows: MetricPointRow[], now: number): Date[] {
+  const buckets = new Set<number>();
+  for (const row of rows) {
+    const t = row.ts.getTime();
+    if (t < now - LATE_MS) buckets.add(bucketFloor(t));
+  }
+  return [...buckets].sort((a, b) => a - b).map((b) => new Date(b));
+}
+
 export async function insertMetricPoints(pool: Pool, rows: MetricPointRow[]): Promise<number> {
   if (rows.length === 0) return 0;
-  const ids = await resolveSeries(pool, rows, rows.map(seriesIdentity));
+  const ids = await resolveSeries(pool, rows);
+  const late = lateBuckets(rows, Date.now());
   const perStatement = Math.floor(MAX_BIND_PARAMETERS / 3);
   const statements: { text: string; values: unknown[] }[] = [];
   for (let start = 0; start < rows.length; start += perStatement) {
@@ -125,6 +185,12 @@ export async function insertMetricPoints(pool: Pool, rows: MetricPointRow[]): Pr
       tuples.push(`($${b + 1}, $${b + 2}, $${b + 3})`);
     }
     statements.push({ text: `insert into metric_samples (series_id, ts, value) values ${tuples.join(", ")}`, values });
+  }
+  if (late.length > 0) {
+    statements.push({
+      text: "insert into metric_rollup_dirty (bucket) select unnest($1::timestamptz[]) on conflict do nothing",
+      values: [late],
+    });
   }
   if (statements.length === 1) {
     await pool.query(statements[0]!.text, statements[0]!.values);
@@ -169,25 +235,64 @@ export async function rollUpMetrics(pool: Pool, now = new Date()): Promise<{ fro
   // A bucket is final once a whole bucket has passed since its end.
   const until = bucketFloor(now.getTime() - ROLLUP_BUCKET_SECONDS * 1000);
   const from = bucketFloor(previous - ROLLUP_LATE_MS);
-  let buckets = 0;
+  let buckets = await rollUpDirty(pool);
   for (let start = from; start < until; start += ROLLUP_CHUNK_MS) {
     const end = Math.min(until, start + ROLLUP_CHUNK_MS);
-    const res = await pool.query(
-      `insert into metric_rollups (series_id, bucket, count, sum, min, max, last)
-       select series_id, date_bin('${ROLLUP_BUCKET_SECONDS} seconds', ts, timestamptz '${BUCKET_ORIGIN}'),
-              count(*), sum(value), min(value), max(value), (array_agg(value order by ts desc))[1]
-         from metric_samples
-        where ts >= $1 and ts < $2
-        group by 1, 2
-       on conflict (series_id, bucket) do update
-         set count = excluded.count, sum = excluded.sum, min = excluded.min, max = excluded.max, last = excluded.last`,
-      [new Date(start), new Date(end)],
-    );
+    const res = await pool.query(`${ROLLUP_SQL} where ts >= $1 and ts < $2 ${ROLLUP_UPSERT}`, [new Date(start), new Date(end)]);
     buckets += res.rowCount ?? 0;
     // Progress moves forward only, chunk by chunk, so a failed run resumes where it stopped.
     await pool.query("update metric_rollup_progress set rolled_until = greatest(rolled_until, $1)", [new Date(end)]);
   }
   return { from: new Date(from), until: new Date(Math.max(until, previous)), buckets };
+}
+
+const ROLLUP_SQL = `insert into metric_rollups (series_id, bucket, count, sum, min, max, last)
+  select series_id, date_bin('${ROLLUP_BUCKET_SECONDS} seconds', ts, timestamptz '${BUCKET_ORIGIN}'),
+         count(*), sum(value), min(value), max(value), (array_agg(value order by ts desc))[1]
+    from metric_samples`;
+const ROLLUP_UPSERT = `group by 1, 2
+  on conflict (series_id, bucket) do update
+    set count = excluded.count, sum = excluded.sum, min = excluded.min, max = excluded.max, last = excluded.last`;
+
+/** Recomputes the buckets that got late points, 200 at a time; each batch clears its marks in the same transaction. */
+async function rollUpDirty(pool: Pool): Promise<number> {
+  let buckets = 0;
+  for (;;) {
+    const client = await pool.connect();
+    try {
+      await client.query("begin");
+      const { rows } = await client.query<{ bucket: Date }>(
+        `delete from metric_rollup_dirty where bucket in (select bucket from metric_rollup_dirty order by bucket limit 200)
+         returning bucket`,
+      );
+      if (rows.length === 0) {
+        await client.query("commit");
+        return buckets;
+      }
+      const list = rows.map((r) => r.bucket);
+      const res = await client.query(
+        `${ROLLUP_SQL}
+          where ts >= (select min(b) from unnest($1::timestamptz[]) b)
+            and ts < (select max(b) from unnest($1::timestamptz[]) b) + interval '${ROLLUP_BUCKET_SECONDS} seconds'
+            and date_bin('${ROLLUP_BUCKET_SECONDS} seconds', ts, timestamptz '${BUCKET_ORIGIN}') = any($1::timestamptz[])
+          ${ROLLUP_UPSERT}`,
+        [list],
+      );
+      await client.query("commit");
+      buckets += res.rowCount ?? 0;
+    } catch (err) {
+      await client.query("rollback").catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+}
+
+/** The earliest bucket still waiting for a recompute, if any: retention keeps its day. */
+export async function oldestDirtyBucket(pool: Pool): Promise<Date | null> {
+  const { rows } = await pool.query<{ bucket: Date | null }>("select min(bucket) as bucket from metric_rollup_dirty");
+  return rows[0]?.bucket ?? null;
 }
 
 export interface MetricBucketParams {
@@ -211,6 +316,7 @@ export interface MetricBucket {
 }
 
 export interface MetricBucketSeries {
+  kind: MetricPointRow["kind"];
   attributes: Record<string, unknown>;
   resource: Record<string, unknown>;
   /** Newest first. */
@@ -232,11 +338,12 @@ export async function queryMetricBuckets(pool: Pool, params: MetricBucketParams)
   const { rows: legacy } = await pool.query<{ ok: boolean }>("select to_regclass('metric_points_legacy') is not null as ok");
   const legacyBranch = legacy[0]!.ok
     ? `union all
-       select attributes, resource, ts, 1, value, value, value, value
+       select kind, attributes, resource, ts, 1, value, value, value, value
          from metric_points_legacy
         where project = $1 and metric_name = $2 and ts >= $3::timestamptz and ts < least($4::timestamptz, $5::timestamptz)`
     : "";
   const { rows } = await pool.query<{
+    kind: MetricPointRow["kind"];
     attributes: Record<string, unknown>;
     resource: Record<string, unknown>;
     ts: Date;
@@ -246,36 +353,36 @@ export async function queryMetricBuckets(pool: Pool, params: MetricBucketParams)
     max: number;
     last: number;
   }>(
-    `with pts (attributes, resource, ts, count, sum, min, max, last) as (
-       select s.attributes, s.resource, r.bucket, r.count, r.sum, r.min, r.max, r.last
+    `with pts (kind, attributes, resource, ts, count, sum, min, max, last) as (
+       select s.kind, s.attributes, s.resource, r.bucket, r.count, r.sum, r.min, r.max, r.last
          from metric_rollups r
          join metric_series s on s.id = r.series_id
         where s.project = $1 and s.metric_name = $2 and r.bucket >= $3::timestamptz and r.bucket < least($4::timestamptz, $5::timestamptz)
        union all
-       select s.attributes, s.resource, p.ts, 1, p.value, p.value, p.value, p.value
+       select s.kind, s.attributes, s.resource, p.ts, 1, p.value, p.value, p.value, p.value
          from metric_samples p
          join metric_series s on s.id = p.series_id
         where s.project = $1 and s.metric_name = $2 and p.ts >= greatest($3::timestamptz, $5::timestamptz) and p.ts < $4::timestamptz
        ${legacyBranch}
      ), binned as (
-       select attributes, resource, date_bin(make_interval(secs => $6::int), ts, timestamptz '${BUCKET_ORIGIN}') as ts,
+       select kind, attributes, resource, date_bin(make_interval(secs => $6::int), ts, timestamptz '${BUCKET_ORIGIN}') as ts,
               sum(count) as count, sum(sum) as sum, min(min) as min, max(max) as max,
               (array_agg(last order by ts desc))[1] as last
          from pts
-        group by 1, 2, 3
+        group by 1, 2, 3, 4
      )
      select * from (
-       select *, row_number() over (partition by attributes, resource order by ts desc) as n from binned
+       select *, row_number() over (partition by kind, attributes, resource order by ts desc) as n from binned
      ) b where n <= $7::int
-     order by attributes::text, resource::text, ts desc`,
+     order by kind, attributes::text, resource::text, ts desc`,
     [params.project, params.metricName, params.since, until, rolled, params.stepSeconds, limit],
   );
   const series = new Map<string, MetricBucketSeries>();
   for (const r of rows) {
-    const key = `${JSON.stringify(r.attributes)}\u0000${JSON.stringify(r.resource)}`;
+    const key = `${r.kind}\u0000${JSON.stringify(r.attributes)}\u0000${JSON.stringify(r.resource)}`;
     let s = series.get(key);
     if (!s) {
-      s = { attributes: r.attributes, resource: r.resource, buckets: [] };
+      s = { kind: r.kind, attributes: r.attributes, resource: r.resource, buckets: [] };
       series.set(key, s);
     }
     const count = Number(r.count);

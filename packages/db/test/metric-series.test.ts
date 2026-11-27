@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { MetricPointRow } from "@sensorium/core";
 import { Pool } from "pg";
-import { insertMetricPoints, queryMetricBuckets, rollUpMetrics, rolledUntil, seriesIdentity } from "../src/metrics.js";
+import { insertMetricPoints, oldestDirtyBucket, queryMetricBuckets, rollUpMetrics, rolledUntil } from "../src/metrics.js";
 import { runMigrations } from "../src/migrate.js";
 import { createProject, listMetricNames, queryMetrics } from "../src/queries.js";
 import { dropExpiredPartitions, utcDay } from "../src/retention.js";
@@ -83,7 +83,6 @@ describe.skipIf(!DATABASE_URL)("0008 metric series (integration, requires DATABA
   });
 
   test("attribute key order does not split a series", async () => {
-    expect(seriesIdentity(point({ attributes: { host: "a", core: 0 } }))).toEqual(seriesIdentity(point({ attributes: { core: 0, host: "a" } })));
     await insertMetricPoints(pool, [point({ value: 1, attributes: { host: "a", core: 0 } })]);
     // A fresh pool has an empty series cache, so this one resolves through the database.
     const other = new Pool({ connectionString: url.toString() });
@@ -160,6 +159,41 @@ describe.skipIf(!DATABASE_URL)("0008 metric series (integration, requires DATABA
     const legacy = series[0]!.buckets.find((b) => b.max === 20)!;
     expect(legacy).toMatchObject({ count: 2, min: 10, avg: 15, last: 20 });
     await expect(queryMetricBuckets(pool, { project: "p", metricName: "cpu", since: new Date(), stepSeconds: 100 })).rejects.toThrow();
+  });
+
+  test("a point hours late is marked and folded in by the next rollup", async () => {
+    // Rollups have moved past the point's bucket long ago.
+    const ts = new Date(Date.now() - 2 * 3_600_000);
+    await insertMetricPoints(pool, [point({ metricName: "late", ts, value: 42 })]);
+    expect((await oldestDirtyBucket(pool))?.getTime()).toBeLessThanOrEqual(ts.getTime());
+    await rollUpMetrics(pool);
+    expect(await oldestDirtyBucket(pool)).toBeNull();
+    const { rows } = await pool.query(
+      "select r.count, r.last from metric_rollups r join metric_series s on s.id = r.series_id where s.metric_name = 'late'",
+    );
+    expect(rows).toEqual([{ count: 1, last: 42 }]);
+  });
+
+  test("an ingest from before 0008 still writes through the view, into the same series", async () => {
+    await insertMetricPoints(pool, [point({ metricName: "compat", value: 1, attributes: { host: "a", core: 0 } })]);
+    await pool.query(
+      `insert into metric_points (project, metric_name, ts, kind, value, attributes, resource)
+       values ('p', 'compat', now(), 'gauge', 2, '{"core":0,"host":"a"}', '{"service.name":"s"}'),
+              ('p', 'compat', now() - interval '1 hour', 'gauge', 3, '{"core":0,"host":"a"}', '{"service.name":"s"}')`,
+    );
+    const { rows } = await pool.query(
+      "select count(distinct s.id)::int series, count(*)::int points from metric_samples p join metric_series s on s.id = p.series_id where s.metric_name = 'compat'",
+    );
+    expect(rows[0]).toEqual({ series: 1, points: 3 });
+    // The hour-old row is marked for the rollup like a late point from ingest.
+    expect(await oldestDirtyBucket(pool)).not.toBeNull();
+    await rollUpMetrics(pool);
+  });
+
+  test("a gauge and a sum with the same name and labels stay apart in buckets", async () => {
+    await insertMetricPoints(pool, [point({ metricName: "mixed", kind: "gauge", value: 1 }), point({ metricName: "mixed", kind: "sum", value: 100 })]);
+    const series = await queryMetricBuckets(pool, { project: "p", metricName: "mixed", since: new Date(Date.now() - 600_000), stepSeconds: 300 });
+    expect(series.map((s) => [s.kind, s.buckets[0]!.max]).sort()).toEqual([["gauge", 1], ["sum", 100]]);
   });
 
   test("a samples partition is not dropped before it is rolled up", async () => {
