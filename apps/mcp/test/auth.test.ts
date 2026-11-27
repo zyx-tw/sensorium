@@ -84,6 +84,18 @@ describe("mcp auth", () => {
     expect(await status(`Bearer ${await token({ ...reader, typ: "ID" })}`)).toBe(401);
   });
 
+  test("an RFC 9068 token (typ at+jwt in the header, none in the payload) is accepted", async () => {
+    expect(await status(`Bearer ${await token({ ...reader, typ: undefined }, privateKey, { typ: "at+jwt" })}`)).toBe(200);
+  });
+
+  test("a token with neither marker is refused", async () => {
+    expect(await status(`Bearer ${await token({ ...reader, typ: undefined })}`)).toBe(401);
+  });
+
+  test("a signed token without exp is refused", async () => {
+    expect(await status(`Bearer ${await token({ ...reader, exp: undefined })}`)).toBe(401);
+  });
+
   test("an expired token is refused", async () => {
     expect(await status(`Bearer ${await token({ ...reader, exp: Math.floor(Date.now() / 1000) - 60 })}`)).toBe(401);
   });

@@ -77,7 +77,7 @@ const PAGE: { title: string; tagline: string; sections: { heading: string; block
               code: "docker compose up -d",
             },
             {
-              text: "Put a reverse proxy with TLS in front, and route `/mcp` to port 8788 and everything else to port 8787. Both ports listen on 127.0.0.1, and tokens travel in the Authorization header.",
+              text: "Put a reverse proxy with TLS in front, and route `/mcp` (and, with OAuth, `/.well-known/oauth-protected-resource`) to port 8788 and everything else to port 8787. Both ports listen on 127.0.0.1, and tokens travel in the Authorization header.",
             },
           ],
         },

@@ -41,11 +41,11 @@ This starts Postgres and applies the schema. It also runs the receiver on port 8
 > [!IMPORTANT]
 > Both ports listen on 127.0.0.1, and tokens travel in the Authorization header. Put a reverse proxy with TLS in front before anything outside the machine talks to sensorium.
 
-With one host for both endpoints, the proxy sends `/mcp` to port 8788 and everything else to port 8787. In Caddy:
+With one host for both endpoints, the proxy sends `/mcp` (and, with OAuth, `/.well-known/oauth-protected-resource`) to port 8788 and everything else to port 8787. In Caddy:
 
 ```caddyfile
 sensorium.example.com {
-	handle /mcp* {
+	handle /mcp* /.well-known/oauth-protected-resource* {
 		reverse_proxy 127.0.0.1:8788
 	}
 	handle {

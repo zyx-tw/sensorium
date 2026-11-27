@@ -97,11 +97,16 @@ export function createMcpAuth(config: McpAuthConfig, keySet?: KeySet) {
 
   async function verifyOidc(token: string): Promise<McpCaller> {
     let claims: JWTPayload;
+    let headerType: string | undefined;
     try {
-      ({ payload: claims } = await jwtVerify(token, await issuerKeys(), {
+      const verified = await jwtVerify(token, await issuerKeys(), {
         issuer: oidc!.issuer,
         audience: oidc!.resource,
-      }));
+        // jose checks exp only when present; a token without one would never expire.
+        requiredClaims: ["exp", "sub"],
+      });
+      claims = verified.payload;
+      headerType = verified.protectedHeader.typ?.toLowerCase();
     } catch (err) {
       // The issuer's keys out of reach is an outage, not a bad token: a 401 would send
       // every client back to sign in. jose throws a bare JOSEError for a non-200 key set.
@@ -115,8 +120,10 @@ export function createMcpAuth(config: McpAuthConfig, keySet?: KeySet) {
       }
       throw new McpAuthError(401, "invalid token");
     }
-    // An ID token can carry the same issuer and audience; only access tokens are accepted.
-    if (claims.typ !== "Bearer" && claims.typ !== "at+jwt") throw new McpAuthError(401, "not an access token");
+    // An ID token can carry the same issuer and audience; only access tokens are accepted:
+    // RFC 9068 marks them in the signed header (typ at+jwt), Keycloak in the payload (typ Bearer).
+    const accessToken = headerType === "at+jwt" || headerType === "application/at+jwt" || claims.typ === "Bearer";
+    if (!accessToken) throw new McpAuthError(401, "not an access token");
     if (typeof claims.sub !== "string") throw new McpAuthError(401, "token has no subject");
     if (typeof claims.azp !== "string" || !oidc!.clientIds.includes(claims.azp)) {
       throw new McpAuthError(401, "token not issued for this MCP server");

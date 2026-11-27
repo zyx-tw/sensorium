@@ -43,11 +43,11 @@ docker compose up -d
 > [!IMPORTANT]
 > 两个端口都只监听 127.0.0.1，令牌放在 Authorization 请求头里传送。在机器外的任何东西连进来之前，前面要先放一个带 TLS 的反向代理。
 
-两个端点共用一个域名时，代理把 `/mcp` 发到 8788，其他都发到 8787。Caddy 的写法：
+两个端点共用一个域名时，代理把 `/mcp`（用 OAuth 时还有 `/.well-known/oauth-protected-resource`）发到 8788，其他都发到 8787。Caddy 的写法：
 
 ```caddyfile
 sensorium.example.com {
-	handle /mcp* {
+	handle /mcp* /.well-known/oauth-protected-resource* {
 		reverse_proxy 127.0.0.1:8788
 	}
 	handle {

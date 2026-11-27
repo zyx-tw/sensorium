@@ -43,11 +43,11 @@ docker compose up -d
 > [!IMPORTANT]
 > 兩個 port 都只聽 127.0.0.1，權杖放在 Authorization 標頭裡傳送。在機器外的任何東西連進來之前，前面要先放一個有 TLS 的反向代理。
 
-兩個端點共用一個網域時，代理把 `/mcp` 送到 8788，其他都送到 8787。Caddy 的寫法：
+兩個端點共用一個網域時，代理把 `/mcp`（用 OAuth 時還有 `/.well-known/oauth-protected-resource`）送到 8788，其他都送到 8787。Caddy 的寫法：
 
 ```caddyfile
 sensorium.example.com {
-	handle /mcp* {
+	handle /mcp* /.well-known/oauth-protected-resource* {
 		reverse_proxy 127.0.0.1:8788
 	}
 	handle {
