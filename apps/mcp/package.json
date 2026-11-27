@@ -7,13 +7,15 @@
     "dev": "bun run --watch src/index.ts",
     "start": "bun run src/index.ts",
     "build": "bun build src/index.ts --outdir dist --target bun",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "bun test"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/server": "^2.4.0",
     "@sensorium/core": "workspace:*",
     "@sensorium/db": "workspace:*",
-    "zod": "^3.25.76"
+    "jose": "^6.2",
+    "zod": "^4.2"
   },
   "devDependencies": {
     "@sensorium/typescript-config": "workspace:*",

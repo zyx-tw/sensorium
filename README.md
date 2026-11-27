@@ -99,7 +99,8 @@ Set these in `.env`. [.env.example](.env.example) documents each one.
 | Key | Sets | Default |
 |-----|------|---------|
 | `POSTGRES_PASSWORD` | the bundled Postgres password | required |
-| `SENSORIUM_MCP_TOKEN` | the bearer token that every agent sends to `/mcp` | required |
+| `SENSORIUM_MCP_TOKEN` | a static bearer token that agents send to `/mcp` | this or the OIDC issuer |
+| `SENSORIUM_MCP_OIDC_ISSUER`, `SENSORIUM_MCP_RESOURCE`, `SENSORIUM_MCP_OIDC_CLIENT_IDS`, `SENSORIUM_MCP_OIDC_ROLE` | accept OAuth access tokens from this issuer for this `/mcp` URL, from these clients, optionally only with this realm role; serves the protected resource metadata | unset |
 | `SENSORIUM_VERSION` | the image tag that compose runs | `latest` |
 | `SENSORIUM_BIND` | the address of the two ports | `127.0.0.1` |
 | `SENSORIUM_INGEST_PORT`, `SENSORIUM_MCP_PORT` | the published ports | `8787`, `8788` |
@@ -151,7 +152,7 @@ Facts for coding agents and LLM tools. The rules for changing the code are in [A
 - **Install**: `docker compose up -d` with `compose.yaml` and `.env` from this repo
 - **Run**: `docker compose up -d`
 - **Verify**: `docker compose run --rm ingest register-project test`, send one OTLP log, then call `query_logs` for `test`
-- **Config**: `POSTGRES_PASSWORD`, `SENSORIUM_MCP_TOKEN`, `SENSORIUM_VERSION`, `SENSORIUM_BIND`, `SENSORIUM_INGEST_PORT`, `SENSORIUM_MCP_PORT`, `SENSORIUM_RETENTION_*`, `DATABASE_URL`
+- **Config**: `POSTGRES_PASSWORD`, `SENSORIUM_MCP_TOKEN`, `SENSORIUM_MCP_OIDC_*`, `SENSORIUM_MCP_RESOURCE`, `SENSORIUM_VERSION`, `SENSORIUM_BIND`, `SENSORIUM_INGEST_PORT`, `SENSORIUM_MCP_PORT`, `SENSORIUM_RETENTION_*`, `DATABASE_URL`
 - **Secrets**: `SENSORIUM_MCP_TOKEN` and the database password in `.env`. Registration prints each ingest token once.
 - **Limits**: no gRPC, no per-project rate limits. Reads cross projects for every MCP token holder.
 
