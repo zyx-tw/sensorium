@@ -56,7 +56,7 @@ const PAGE: { title: string; tagline: string; sections: { heading: string; block
             ["Projects", "Each project has its own ingest token, and the token decides where its records land."],
             [
               "MCP",
-              "Eight read-only tools at `/mcp`: `list_projects`, `query_logs`, `query_traces`, `list_traces`, `error_summary`, `top_sources`, `query_metrics` and `search`.",
+              "Ten read-only tools at `/mcp`: `list_projects`, `query_logs`, `query_traces`, `list_traces`, `error_summary`, `top_sources`, `query_metrics`, `search`, `agent_usage` and `storage_stats`.",
             ],
             ["Retention", "Metrics for 14 days, spans and logs for 30, by default."],
           ],

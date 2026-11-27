@@ -79,6 +79,8 @@ export function isInboundSpan(span: Pick<SpanRow, "kind" | "attributes">): boole
   const { attributes } = span;
   return (
     typeof attributes["http.route"] === "string" ||
+    // url.path is the current semconv name; http.target the legacy one.
+    typeof attributes["url.path"] === "string" ||
     typeof attributes["http.target"] === "string" ||
     typeof attributes["vercel.matched_path"] === "string"
   );

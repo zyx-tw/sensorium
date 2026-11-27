@@ -303,6 +303,7 @@ describe("isOutboundSpan / isInboundSpan", () => {
   test("route-ish attributes count as inbound when kind isn't SERVER", () => {
     expect(isInboundSpan({ kind: "internal" as const, attributes: { "http.route": "/x" } })).toBe(true);
     expect(isInboundSpan({ kind: "internal" as const, attributes: { "http.target": "/x" } })).toBe(true);
+    expect(isInboundSpan({ kind: "internal" as const, attributes: { "url.path": "/x" } })).toBe(true);
     expect(isInboundSpan({ kind: "internal" as const, attributes: { "vercel.matched_path": "/x" } })).toBe(true);
   });
 

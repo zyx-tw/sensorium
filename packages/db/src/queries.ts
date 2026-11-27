@@ -366,6 +366,7 @@ const OUTBOUND_SPAN_SQL = `(
 const INBOUND_SPAN_SQL = `(
     kind = 'server'
     or attributes ->> 'http.route' is not null
+    or attributes ->> 'url.path' is not null
     or attributes ->> 'http.target' is not null
     or attributes ->> 'vercel.matched_path' is not null
   )`;
