@@ -1,6 +1,6 @@
 # One image for every sensorium role; `sensorium <role>` picks one (bin/sensorium).
 # Bun runs the TypeScript sources directly, so there is no build step.
-FROM oven/bun:1.3.13-alpine
+FROM oven/bun:1.4.5-alpine
 
 WORKDIR /app
 
