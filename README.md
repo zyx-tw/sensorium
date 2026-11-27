@@ -4,10 +4,10 @@
 
 <p><strong>Observability for agents: OpenTelemetry in, MCP out.</strong></p>
 
-[![CI](https://img.shields.io/github/actions/workflow/status/zyx1121/sensorium/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/zyx1121/sensorium/actions)
-[![Image](https://img.shields.io/badge/ghcr.io-zyx1121%2Fsensorium-111111?style=flat-square&logo=docker&logoColor=white)](https://github.com/zyx1121/sensorium/pkgs/container/sensorium)
+[![CI](https://img.shields.io/github/actions/workflow/status/zyx-tw/sensorium/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/zyx-tw/sensorium/actions)
+[![Image](https://img.shields.io/badge/ghcr.io-zyx--tw%2Fsensorium-111111?style=flat-square&logo=docker&logoColor=white)](https://github.com/zyx-tw/sensorium/pkgs/container/sensorium)
 [![Live](https://img.shields.io/badge/live-sensorium.zyx.tw-000000?style=flat-square)](https://sensorium.zyx.tw)
-[![License](https://img.shields.io/github/license/zyx1121/sensorium?style=flat-square)](LICENSE)
+[![License](https://img.shields.io/github/license/zyx-tw/sensorium?style=flat-square)](LICENSE)
 
 **English** | [繁體中文](README.zh-TW.md) | [简体中文](README.zh-CN.md)
 
@@ -30,13 +30,13 @@ Your services already speak OpenTelemetry, but the reader of their logs at 3 am 
 ## Quick start
 
 ```sh
-curl -fsSLO https://raw.githubusercontent.com/zyx1121/sensorium/main/compose.yaml
-curl -fsSL -o .env https://raw.githubusercontent.com/zyx1121/sensorium/main/.env.example
+curl -fsSLO https://raw.githubusercontent.com/zyx-tw/sensorium/main/compose.yaml
+curl -fsSL -o .env https://raw.githubusercontent.com/zyx-tw/sensorium/main/.env.example
 # set POSTGRES_PASSWORD and SENSORIUM_MCP_TOKEN in .env, for example with `openssl rand -hex 32`
 docker compose up -d
 ```
 
-This starts Postgres and applies the schema. It also runs the receiver on port 8787, the MCP endpoint on port 8788 and a retention sweep every 24 hours, all from `ghcr.io/zyx1121/sensorium`.
+This starts Postgres and applies the schema. It also runs the receiver on port 8787, the MCP endpoint on port 8788 and a retention sweep every 24 hours, all from `ghcr.io/zyx-tw/sensorium`.
 
 > [!IMPORTANT]
 > Both ports listen on 127.0.0.1, and tokens travel in the Authorization header. Put a reverse proxy with TLS in front before anything outside the machine talks to sensorium.

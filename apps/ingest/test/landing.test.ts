@@ -40,7 +40,7 @@ describe("landing page", () => {
     const body = await (await get(on, "/")).text();
     for (const tip of [
       "www.zyx.tw",
-      "zyx1121/sensorium",
+      "zyx-tw/sensorium",
       "What we store",
       "The rules",
       "Loki",
@@ -67,11 +67,11 @@ describe("landing page", () => {
     expect(md).toContain("   ```sh\n   OTEL_EXPORTER_OTLP_ENDPOINT=https://sensorium.example.com\n");
     expect(page).toContain("<pre><code>docker compose up -d</code></pre>");
     // Links that leave zyx.tw open in a new tab with no referrer; zyx.tw's own do not.
-    expect(page).toContain('<a class="link" href="https://github.com/zyx1121/sensorium" target="_blank" rel="noopener noreferrer">GitHub</a>');
-    expect(page).toContain('<a href="https://github.com/zyx1121/sensorium/blob/main/.env.example" target="_blank" rel="noopener noreferrer">.env.example</a>');
+    expect(page).toContain('<a class="link" href="https://github.com/zyx-tw/sensorium" target="_blank" rel="noopener noreferrer">GitHub</a>');
+    expect(page).toContain('<a href="https://github.com/zyx-tw/sensorium/blob/main/.env.example" target="_blank" rel="noopener noreferrer">.env.example</a>');
     expect(page).toContain("route <code>/mcp</code> (and, with OAuth, <code>/.well-known/oauth-protected-resource</code>) to port 8788");
     expect(page).toContain('<a class="link" href="https://www.zyx.tw/privacy">Privacy</a>');
-    expect(md).toContain("[.env.example](https://github.com/zyx1121/sensorium/blob/main/.env.example)");
+    expect(md).toContain("[.env.example](https://github.com/zyx-tw/sensorium/blob/main/.env.example)");
     // Ingest decodes gzip, so a Collector needs no compression override.
     expect(page).toContain("plain or gzip, but not gRPC");
   });

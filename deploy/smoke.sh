@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The image as deployed: the stack from .env.example, then scripts/smoke.sh.
-# ci runs it with the image loaded as ghcr.io/zyx1121/sensorium:ci.
+# ci runs it with the image loaded as ghcr.io/zyx-tw/sensorium:ci.
 set -euo pipefail
 trap 'docker compose logs' EXIT
 sed -e 's/^SENSORIUM_VERSION=.*/SENSORIUM_VERSION=ci/' \

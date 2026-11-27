@@ -19,7 +19,7 @@ jobs:
       actions: read
       id-token: write
     with:
-      images: '["ghcr.io/zyx1121/sensorium"]'
+      images: '["ghcr.io/zyx-tw/sensorium"]'
       target: land
       tenant: compose
       app: sensorium
