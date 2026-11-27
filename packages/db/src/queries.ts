@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { LogRow, MetricPointRow, SpanRow } from "@sensorium/core";
 import type { Pool } from "pg";
-import { PARTITIONED_TABLES, partitionPrefix, type PartitionedTable } from "./retention.js";
+import { PARTITIONED_TABLES, partitionColumn, partitionPrefix, retentionConfigFromEnv, utcDay, type PartitionedTable } from "./retention.js";
 
 export function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
@@ -61,7 +61,7 @@ export interface TableStorage {
   newestDay: string | null;
   /** Days of partitions that exist ahead of today; 0 or less means ingest is about to land in the default partition. */
   daysAhead: number | null;
-  /** Rows in <table>_default (capped at 100000); above 0 means the retention sweep has not run lately. */
+  /** Rows in <table>_default that retention should have moved (capped at 100000); above 0 means it has not run lately. Rows past aheadDays stay there and are not counted. */
   defaultRows: number;
 }
 
@@ -82,6 +82,9 @@ export async function storageStats(pool: Pool): Promise<StorageStats> {
   const tables: TableStorage[] = [];
   const { rows: legacy } = await pool.query<{ ok: boolean }>("select to_regclass('metric_points_legacy') is not null as ok");
   const all: PartitionedTable[] = [...PARTITIONED_TABLES, ...(legacy[0]!.ok ? (["metric_points_legacy"] as const) : [])];
+  // Retention moves default rows up to this point; a row further ahead (a skewed
+  // clock) stays in default on purpose and is not counted.
+  const horizon = utcDay(new Date(), retentionConfigFromEnv().aheadDays + 1).toISOString();
   for (const table of all) {
     const prefix = partitionPrefix(table);
     const { rows } = await pool.query<{ bytes: string | null; partitions: string; oldest: string | null; newest: string | null }>(
@@ -99,7 +102,10 @@ export async function storageStats(pool: Pool): Promise<StorageStats> {
     const newestDay = day(r.newest);
     const { rows: hasDefault } = await pool.query<{ ok: boolean }>(`select to_regclass($1) is not null as ok`, [`${prefix}_default`]);
     const { rows: def } = hasDefault[0]!.ok
-      ? await pool.query<{ n: string }>(`select count(*) as n from (select 1 from ${prefix}_default limit 100000) d`)
+      ? await pool.query<{ n: string }>(
+          `select count(*) as n from (select 1 from ${prefix}_default where ${partitionColumn(table)} < $1 limit 100000) d`,
+          [horizon],
+        )
       : { rows: [{ n: "0" }] };
     tables.push({
       table,
