@@ -127,13 +127,13 @@ describe.skipIf(!DATABASE_URL)("0006 partitions spans and logs (integration, req
 
   test("retention drops expired days for spans and logs by partition", async () => {
     const report = await runRetention(pool, { ...DEFAULT_RETENTION, spanDays: 30, logDays: 30 }, new Date(now));
-    expect(report.spans.partitionsDropped.length).toBeGreaterThan(0);
+    expect(report.tables.spans!.partitionsDropped.length).toBeGreaterThan(0);
     const { rows } = await pool.query(
       "select count(*)::int n, (select count(*)::int from spans_default) d, (select count(*)::int from spans_21000101) f from spans",
     );
     // The 40-day-old span is gone; the 2100 one moved out of default into its own day.
     expect(rows[0]).toEqual({ n: 3, d: 0, f: 1 });
-    expect(report.spans.defaultRowsRescued).toBe(1);
-    expect(report.logs.partitionsCreated).toEqual([]);
+    expect(report.tables.spans!.defaultRowsRescued).toBe(1);
+    expect(report.tables.logs!.partitionsCreated).toEqual([]);
   });
 });

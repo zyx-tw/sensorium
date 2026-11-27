@@ -27,7 +27,7 @@ $ error_summary { "project": "reel", "windowMinutes": 1440 }
 - **接收 OpenTelemetry**：在 `/v1/logs`、`/v1/traces` 和 `/v1/metrics` 接收 OTLP over HTTP，JSON 或 protobuf 都可以。
 - **项目彼此隔离**：每个项目有自己的写入令牌，由令牌决定数据写到哪里。
 - **回答 agent**：在 `/mcp` 提供 8 个只读的 MCP 工具。
-- **自动清理旧数据**：默认 metric 保留 14 天，span 和日志保留 30 天。
+- **自动清理旧数据**：默认原始 metric 保留 14 天，5 分钟 metric 汇总保留 90 天，span 和日志保留 30 天。
 
 ## 快速开始
 
@@ -91,7 +91,7 @@ sensorium.example.com {
 | `query_logs`、`query_traces`、`list_traces` | 可筛选的日志、span 和完整 trace |
 | `error_summary` | 错误日志和错误 span 的数量，以及最常出现的消息 |
 | `top_sources` | 最常出现的客户端、国家和路由 |
-| `query_metrics` | 按名称查询 metric 数据点 |
+| `query_metrics` | 按名称查询 metric 数据点，或用 `step` 取每个 series 的区间汇总 |
 | `search` | 在日志和 span 里做文字搜索 |
 | `agent_usage` | 从 `gen_ai.*` span 算出每个模型与工具的 token、调用、错误与延迟 |
 | `storage_stats` | 数据库大小、分区，以及没有数据或被拒收的项目 |
@@ -112,12 +112,13 @@ sensorium.example.com {
 | `SENSORIUM_VERSION` | compose 运行的镜像 tag | `latest` |
 | `SENSORIUM_BIND` | 两个端口监听的地址 | `127.0.0.1` |
 | `SENSORIUM_INGEST_PORT`、`SENSORIUM_MCP_PORT` | 对外开放的端口 | `8787`、`8788` |
-| `SENSORIUM_RETENTION_METRIC_DAYS` | metric 保留天数 | `14` |
+| `SENSORIUM_RETENTION_METRIC_DAYS` | 原始 metric 数据点保留天数 | `14` |
+| `SENSORIUM_RETENTION_ROLLUP_DAYS` | 5 分钟 metric 汇总保留天数 | `90` |
 | `SENSORIUM_RETENTION_SPAN_DAYS`、`SENSORIUM_RETENTION_LOG_DAYS` | span 和日志保留天数 | `30` |
 | `SENSORIUM_RETENTION_AHEAD_DAYS` | 预先创建几天的分区 | `7` |
 | `DATABASE_URL`、`PORT`、`MCP_PORT` | 只有从源码运行时需要 | |
 
-按实际流量估算 metric 的保留天数。一台繁忙的 Proxmox 主机每天约写 2.4 GB 的 metric，14 天约占 33 GB。
+按实际流量估算 metric 的保留天数。每个数据点在磁盘上约占 90 bytes，每个不同的 series 只存一次。
 
 ## 工作原理
 
@@ -128,7 +129,7 @@ flowchart LR
     producer -.->|"or through"| collector
 
     subgraph sensorium
-        ingest["apps/ingest\n(OTLP/HTTP receiver)"] --> pg[("Postgres\nlogs, spans, metric_points\n+ projects")]
+        ingest["apps/ingest\n(OTLP/HTTP receiver)"] --> pg[("Postgres\nlogs, spans, metric samples\n+ series, rollups, projects")]
         mcp["apps/mcp\n(read-only MCP)"] --> pg
     end
 
@@ -137,7 +138,9 @@ flowchart LR
 
 - 注册时，每个写入令牌绑定一个项目。sensorium 会记下 producer 声称的 `service.namespace`，但不会用它来划分项目，只由令牌决定。
 - MCP 端点用一组共享令牌给受信任的读取者，可以跨项目读取。
-- `metric_points`、`spans`、`logs` 每个 UTC 日一个分区，清理时直接删除整张表，空间立刻释放。
+- `metric_samples`、`metric_rollups`、`spans`、`logs` 每个 UTC 日一个分区，清理时直接删除整张表，空间立刻释放。
+- 每个 metric series（名称、种类、attributes、resource）只在 `metric_series` 存一次，每个数据点是 `(series_id, ts, value)`。`metric_points` 是把它们接回来的 view。
+- 清理任务每小时运行一次。它先把完成的 5 分钟区间汇总进 `metric_rollups`，还没汇总的原始数据点不会被删除。
 
 ## 限制
 

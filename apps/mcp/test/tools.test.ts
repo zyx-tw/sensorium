@@ -61,7 +61,7 @@ describe.skipIf(!DATABASE_URL)("mcp tools (integration, requires DATABASE_URL)",
   test("storage_stats reports each partitioned table and the silent project", async () => {
     const { result } = await call(app, "tools/call", { name: "storage_stats", arguments: {} });
     const stats = (result.structuredContent as { result: { tables: { table: string; partitions: number }[]; silentProjects: { name: string }[] } }).result;
-    expect(stats.tables.map((t) => t.table)).toEqual(["metric_points", "spans", "logs"]);
+    expect(stats.tables.map((t) => t.table)).toEqual(["metric_samples", "metric_rollups", "spans", "logs", "metric_points_legacy"]);
     expect(stats.tables[0]!.partitions).toBeGreaterThan(0);
     expect(stats.silentProjects.some((p) => p.name === project)).toBe(true);
   });

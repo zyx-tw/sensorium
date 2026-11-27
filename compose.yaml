@@ -1,5 +1,5 @@
 # sensorium on Docker Compose: Postgres, the OTLP receiver, the MCP endpoint
-# and the daily retention sweep, all from one image.
+# and the hourly retention sweep, all from one image.
 #
 #   cp .env.example .env      # set POSTGRES_PASSWORD and SENSORIUM_MCP_TOKEN (or the OIDC keys)
 #   docker compose up -d
@@ -102,10 +102,10 @@ services:
       migrate:
         condition: service_completed_successfully
 
-  # Creates partitions ahead and expires old rows, now and every 24 hours.
+  # Rolls up metrics, creates partitions ahead and expires old rows, now and every hour.
   retention:
     <<: *sensorium
-    command: retention-daily
+    command: retention-hourly
     environment: *database
     depends_on:
       migrate:

@@ -13,7 +13,7 @@ Postgres.
 | ----------------------------- | ----------------------------------- |
 | `sensorium-ingest.service`    | OTLP/HTTP receiver on `PORT` (8787) |
 | `sensorium-mcp.service`       | MCP endpoint on `MCP_PORT` (8788)   |
-| `sensorium-retention.timer`   | fires the sweep daily at 03:20 UTC  |
+| `sensorium-retention.timer`   | fires the sweep hourly at :20 UTC   |
 | `sensorium-retention.service` | the sweep itself (`Type=oneshot`)   |
 
 ```sh
@@ -23,14 +23,17 @@ systemctl enable --now sensorium-retention.timer
 
 ## Retention
 
-`metric_points`, `spans` and `logs` are partitioned by UTC day, so expiring
+`metric_samples`, `metric_rollups`, `spans` and `logs` are partitioned by UTC day, so expiring
 them is a `DROP TABLE` per day rather than a `DELETE`: the space returns to the
 filesystem straight away. Each has a `<table>_default` partition as a backstop,
-which the sweep drains into real partitions.
+which the sweep drains into real partitions. Each sweep first folds finished
+5-minute buckets into `metric_rollups`, and a samples day is dropped only once
+it is rolled up. Rows from before migration 0008 stay in
+`metric_points_legacy` until their days expire.
 
-Windows are set per instance in `app.env`; the defaults are 14 days of metrics
-and 30 days of spans and logs. Size the metric window against real throughput:
-one busy PVE project alone writes roughly 2.4GB/day, so 14 days is about 33GB.
+Windows are set per instance in `app.env`; the defaults are 14 days of raw
+metrics, 90 days of rollups, and 30 days of spans and logs. Size the metric
+window against real throughput: each point takes about 90 bytes on disk.
 
 The timer is not optional. Without it, partitions stop being created (rows fall
 into the `_default` partitions, which never expire) and nothing is ever dropped.
@@ -52,7 +55,7 @@ move:
 
 ```sh
 df -h /
-sudo -u postgres psql -d sensorium -Atc "select max(ts) from metric_points"
+sudo -u postgres psql -d sensorium -Atc "select max(last_metric_at) from projects"
 ```
 
 ## Large spans tables (migration 0006)

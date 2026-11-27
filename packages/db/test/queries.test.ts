@@ -6,7 +6,6 @@ import {
   createProject,
   errorSummary,
   insertLogs,
-  insertMetricPoints,
   insertSpans,
   listMetricNames,
   listTraces,
@@ -14,6 +13,7 @@ import {
   queryMetrics,
   topSources,
 } from "../src/queries.js";
+import { insertMetricPoints } from "../src/metrics.js";
 
 // Integration tests against a real Postgres — require DATABASE_URL (see README's
 // "Local development" for how to stand one up). Skipped, not failed, when absent
@@ -695,7 +695,8 @@ describe.skipIf(!DATABASE_URL)("query_metrics + listMetricNames (integration, re
   });
 
   afterAll(async () => {
-    await pool.query("delete from metric_points where project in ($1, $2)", [project, otherProject]);
+    await pool.query("delete from metric_samples where series_id in (select id from metric_series where project in ($1, $2))", [project, otherProject]);
+    await pool.query("delete from metric_series where project in ($1, $2)", [project, otherProject]);
     await pool.query("delete from projects where name in ($1, $2)", [project, otherProject]);
     await pool.end();
   });
@@ -783,7 +784,8 @@ describe.skipIf(!DATABASE_URL)("large batches (integration, requires DATABASE_UR
   });
 
   afterAll(async () => {
-    await pool.query("delete from metric_points where project = $1", [project]);
+    await pool.query("delete from metric_samples where series_id in (select id from metric_series where project = $1)", [project]);
+    await pool.query("delete from metric_series where project = $1", [project]);
     await pool.query("delete from spans where project = $1", [project]);
     await pool.query("delete from projects where name = $1", [project]);
     await pool.end();

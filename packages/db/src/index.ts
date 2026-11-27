@@ -3,3 +3,4 @@ export * from "./migrate.js";
 export * from "./queries.js";
 export * from "./retention.js";
 export * from "./agent-usage.js";
+export * from "./metrics.js";

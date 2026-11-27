@@ -40,14 +40,15 @@ describe("utcDay", () => {
 describe("partition naming", () => {
   test("name and day round-trip", () => {
     const day = utcDay(new Date("2026-07-05T00:00:00Z"));
-    expect(partitionName(day)).toBe("metric_points_20260705");
-    expect(partitionDay("metric_points_20260705")?.toISOString()).toBe(
+    expect(partitionName(day)).toBe("metric_samples_20260705");
+    expect(partitionName(day, "metric_points_legacy")).toBe("metric_points_20260705");
+    expect(partitionDay("metric_samples_20260705")?.toISOString()).toBe(
       day.toISOString(),
     );
   });
 
   test("the default partition is not mistaken for a day", () => {
-    expect(partitionDay("metric_points_default")).toBeNull();
+    expect(partitionDay("metric_samples_default")).toBeNull();
   });
 
   test("bounds are exactly the named day, half-open", () => {

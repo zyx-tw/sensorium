@@ -7,7 +7,7 @@ Bun and Turborepo workspace: `apps/ingest` (the OTLP/HTTP receiver), `apps/mcp` 
 - The ingest token alone decides the project. Never scope records by `service.namespace` or any other value a producer sends.
 - The MCP server stays read-only. Do not add a tool that writes.
 - Schema changes are new files in `packages/db/migrations`. Never edit an applied migration.
-- Keep `metric_points`, `spans` and `logs` partitioned by UTC day, so retention drops whole partitions.
+- Keep `metric_samples`, `metric_rollups`, `spans` and `logs` partitioned by UTC day, so retention drops whole partitions. `metric_points` is a read-only view (migration 0008): write metrics through `insertMetricPoints`.
 - Tokens never appear in logs or tool output.
 - Repository documents and code comments are English.
 

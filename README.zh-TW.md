@@ -27,7 +27,7 @@ $ error_summary { "project": "reel", "windowMinutes": 1440 }
 - **接收 OpenTelemetry**：在 `/v1/logs`、`/v1/traces` 和 `/v1/metrics` 接收 OTLP over HTTP，JSON 或 protobuf 都可以。
 - **專案彼此隔離**：每個專案有自己的寫入權杖，由權杖決定資料寫到哪裡。
 - **回答 agent**：在 `/mcp` 提供 8 個唯讀的 MCP 工具。
-- **自動清除舊資料**：預設 metric 保留 14 天，span 和 log 保留 30 天。
+- **自動清除舊資料**：預設原始 metric 保留 14 天，5 分鐘 metric 彙總保留 90 天，span 和 log 保留 30 天。
 
 ## 快速開始
 
@@ -91,7 +91,7 @@ sensorium.example.com {
 | `query_logs`、`query_traces`、`list_traces` | 可篩選的 log、span 和完整 trace |
 | `error_summary` | 錯誤 log 和錯誤 span 的數量，以及最常出現的訊息 |
 | `top_sources` | 最常出現的用戶端、國家和路由 |
-| `query_metrics` | 依名稱查 metric 資料點 |
+| `query_metrics` | 依名稱查 metric 資料點，或用 `step` 取每個 series 的區間彙總 |
 | `search` | 在 log 和 span 裡做文字搜尋 |
 | `agent_usage` | 從 `gen_ai.*` span 算出每個模型與工具的 token、呼叫、錯誤與延遲 |
 | `storage_stats` | 資料庫大小、分區，以及沒有資料或被拒收的專案 |
@@ -112,12 +112,13 @@ sensorium.example.com {
 | `SENSORIUM_VERSION` | compose 執行的映像檔 tag | `latest` |
 | `SENSORIUM_BIND` | 兩個 port 監聽的位址 | `127.0.0.1` |
 | `SENSORIUM_INGEST_PORT`、`SENSORIUM_MCP_PORT` | 對外開放的 port | `8787`、`8788` |
-| `SENSORIUM_RETENTION_METRIC_DAYS` | metric 保留天數 | `14` |
+| `SENSORIUM_RETENTION_METRIC_DAYS` | 原始 metric 資料點保留天數 | `14` |
+| `SENSORIUM_RETENTION_ROLLUP_DAYS` | 5 分鐘 metric 彙總保留天數 | `90` |
 | `SENSORIUM_RETENTION_SPAN_DAYS`、`SENSORIUM_RETENTION_LOG_DAYS` | span 和 log 保留天數 | `30` |
 | `SENSORIUM_RETENTION_AHEAD_DAYS` | 預先建立幾天的分區 | `7` |
 | `DATABASE_URL`、`PORT`、`MCP_PORT` | 只有從原始碼執行時需要 | |
 
-依實際流量估算 metric 的保留天數。一台忙碌的 Proxmox 主機每天約寫 2.4 GB 的 metric，14 天約佔 33 GB。
+依實際流量估算 metric 的保留天數。每個資料點在磁碟上約佔 90 bytes，每個不同的 series 只存一次。
 
 ## 運作方式
 
@@ -128,7 +129,7 @@ flowchart LR
     producer -.->|"or through"| collector
 
     subgraph sensorium
-        ingest["apps/ingest\n(OTLP/HTTP receiver)"] --> pg[("Postgres\nlogs, spans, metric_points\n+ projects")]
+        ingest["apps/ingest\n(OTLP/HTTP receiver)"] --> pg[("Postgres\nlogs, spans, metric samples\n+ series, rollups, projects")]
         mcp["apps/mcp\n(read-only MCP)"] --> pg
     end
 
@@ -137,7 +138,9 @@ flowchart LR
 
 - 註冊時，每個寫入權杖綁定一個專案。sensorium 會記下 producer 宣稱的 `service.namespace`，但不會用它來分專案，只由權杖決定。
 - MCP 端點用一組共用權杖給信任的讀取者，可以跨專案讀取。
-- `metric_points`、`spans`、`logs` 每個 UTC 日一個分區，清除時直接刪整張表，空間立刻釋放。
+- `metric_samples`、`metric_rollups`、`spans`、`logs` 每個 UTC 日一個分區，清除時直接刪整張表，空間立刻釋放。
+- 每個 metric series（名稱、種類、attributes、resource）只在 `metric_series` 存一次，每個資料點是 `(series_id, ts, value)`。`metric_points` 是把它們接回來的 view。
+- 清除工作每小時跑一次。它先把完成的 5 分鐘區間彙總進 `metric_rollups`，還沒彙總的原始資料點不會被刪。
 
 ## 限制
 

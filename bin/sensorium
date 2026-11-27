@@ -6,19 +6,22 @@
 #   register-project <name>   print a new ingest token for <name>; running it
 #                             again for the same name rotates the token
 #   retention                 one sweep: partitions ahead, expired rows out
-#   retention-daily           a sweep now and every 24 hours, 5 minutes after
-#                             a failure
+#   retention-hourly          a sweep now and every hour (metric rollups run
+#                             in each sweep), 5 minutes after a failure
+#   retention-daily           the same every 24 hours (rollups then lag a day)
 set -eu
 cd /app
 case "${1:-}" in
 ingest) exec bun run apps/ingest/src/index.ts ;;
 mcp) exec bun run apps/mcp/src/index.ts ;;
 migrate | register-project | retention) exec bun run packages/db/src/cli.ts "$@" ;;
-retention-daily)
+retention-hourly | retention-daily)
+	every=3600
+	[ "$1" = retention-daily ] && every=86400
 	trap 'exit 0' INT TERM
 	while :; do
 		if bun run packages/db/src/cli.ts retention; then
-			delay=86400
+			delay=$every
 		else
 			echo "sensorium: retention failed, trying again in 5 minutes" >&2
 			delay=300
@@ -28,7 +31,7 @@ retention-daily)
 	done
 	;;
 *)
-	echo "usage: sensorium ingest | mcp | migrate | register-project <name> | retention | retention-daily" >&2
+	echo "usage: sensorium ingest | mcp | migrate | register-project <name> | retention | retention-hourly | retention-daily" >&2
 	exit 2
 	;;
 esac
