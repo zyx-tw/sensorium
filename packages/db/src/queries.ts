@@ -19,6 +19,14 @@ export async function touchProjectLastSeen(pool: Pool, project: string): Promise
   await pool.query("update projects set last_seen_at = now() where name = $1", [project]);
 }
 
+/** Records the last export ingest refused for a project (status and a short reason, never the body). */
+export async function recordProjectRejection(pool: Pool, project: string, status: number, reason: string): Promise<void> {
+  await pool.query(
+    "update projects set last_rejected_at = now(), last_rejected_status = $2, last_rejected_reason = left($3, 300) where name = $1",
+    [project, status, reason],
+  );
+}
+
 /** Registers (or rotates the token for) a project. Used by `bun run db:register-project`. */
 export async function createProject(pool: Pool, name: string, token: string): Promise<void> {
   await pool.query(
@@ -31,40 +39,111 @@ export async function createProject(pool: Pool, name: string, token: string): Pr
 export interface ProjectSummary {
   name: string;
   createdAt: Date;
+  /** Last ingest, written at most every 30 seconds per project. */
   lastSeenAt: Date | null;
-  logsCount: number;
-  spansCount: number;
-  metricPointsCount: number;
 }
 
+/** Every project, without row counts: counting three telemetry tables cost a full scan of each per call. */
 export async function listProjects(pool: Pool): Promise<ProjectSummary[]> {
-  const { rows: projects } = await pool.query<{
+  const { rows } = await pool.query<{ name: string; created_at: Date; last_seen_at: Date | null }>(
+    "select name, created_at, last_seen_at from projects order by name",
+  );
+  return rows.map((p) => ({ name: p.name, createdAt: p.created_at, lastSeenAt: p.last_seen_at }));
+}
+
+export interface TableStorage {
+  table: string;
+  bytes: number;
+  partitions: number;
+  /** Oldest and newest day partition (YYYY-MM-DD), null when there is none. */
+  oldestDay: string | null;
+  newestDay: string | null;
+  /** Days of partitions that exist ahead of today; 0 or less means ingest is about to land in the default partition. */
+  daysAhead: number | null;
+  /** Rows in <table>_default (capped at 100000); above 0 means the retention sweep has not run lately. */
+  defaultRows: number;
+}
+
+export interface StorageStats {
+  databaseBytes: number;
+  tables: TableStorage[];
+  /** Projects with no ingest in the last hour, oldest first. */
+  silentProjects: { name: string; lastSeenAt: Date | null }[];
+  /** Projects whose exports ingest refused in the last 24 hours (bad body, too large, wrong type), newest first. */
+  rejectedProjects: { name: string; at: Date; status: number; reason: string | null }[];
+}
+
+/** Cheap catalog reads only: sizes and partition names, never a scan of the telemetry tables. */
+export async function storageStats(pool: Pool): Promise<StorageStats> {
+  const { rows: db } = await pool.query<{ bytes: string }>("select pg_database_size(current_database()) as bytes");
+  const tables: TableStorage[] = [];
+  for (const table of ["metric_points", "spans", "logs"]) {
+    const { rows } = await pool.query<{ bytes: string | null; partitions: string; oldest: string | null; newest: string | null }>(
+      `select sum(pg_total_relation_size(c.oid)) as bytes,
+              count(*) filter (where c.relname ~ ('^' || $1 || '_[0-9]{8}$')) as partitions,
+              min(substring(c.relname from '([0-9]{8})$')) as oldest,
+              max(substring(c.relname from '([0-9]{8})$')) as newest
+         from pg_inherits i
+         join pg_class c on c.oid = i.inhrelid
+        where i.inhparent = $1::regclass`,
+      [table],
+    );
+    const r = rows[0]!;
+    const day = (d: string | null) => (d ? `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}` : null);
+    const newestDay = day(r.newest);
+    // A table not yet partitioned (before migration 0006) has no default partition.
+    const { rows: hasDefault } = await pool.query<{ ok: boolean }>(`select to_regclass($1) is not null as ok`, [`${table}_default`]);
+    const { rows: def } = hasDefault[0]!.ok
+      ? await pool.query<{ n: string }>(`select count(*) as n from (select 1 from ${table}_default limit 100000) d`)
+      : { rows: [{ n: "0" }] };
+    tables.push({
+      table,
+      bytes: Number(r.bytes ?? 0),
+      partitions: Number(r.partitions),
+      oldestDay: day(r.oldest),
+      newestDay,
+      daysAhead: newestDay
+        ? Math.round((Date.parse(`${newestDay}T00:00:00Z`) - Date.parse(`${new Date().toISOString().slice(0, 10)}T00:00:00Z`)) / 86_400_000)
+        : null,
+      defaultRows: Number(def[0]?.n ?? 0),
+    });
+  }
+  const { rows: silent } = await pool.query<{ name: string; last_seen_at: Date | null }>(
+    `select name, last_seen_at from projects
+      where last_seen_at is null or last_seen_at < now() - interval '1 hour'
+      order by last_seen_at nulls first`,
+  );
+  const { rows: rejected } = await pool.query<{
     name: string;
-    created_at: Date;
-    last_seen_at: Date | null;
-  }>("select name, created_at, last_seen_at from projects order by name");
+    last_rejected_at: Date;
+    last_rejected_status: number;
+    last_rejected_reason: string | null;
+  }>(
+    `select name, last_rejected_at, last_rejected_status, last_rejected_reason from projects
+      where last_rejected_at > now() - interval '24 hours'
+      order by last_rejected_at desc`,
+  );
+  return {
+    databaseBytes: Number(db[0]!.bytes),
+    tables,
+    silentProjects: silent.map((p) => ({ name: p.name, lastSeenAt: p.last_seen_at })),
+    rejectedProjects: rejected.map((p) => ({
+      name: p.name,
+      at: p.last_rejected_at,
+      status: p.last_rejected_status,
+      reason: p.last_rejected_reason,
+    })),
+  };
+}
 
-  const [logCounts, spanCounts, metricCounts] = await Promise.all([
-    pool.query<{ project: string; count: string }>("select project, count(*) from logs group by project"),
-    pool.query<{ project: string; count: string }>("select project, count(*) from spans group by project"),
-    pool.query<{ project: string; count: string }>(
-      "select project, count(*) from metric_points group by project",
-    ),
-  ]);
-  const toMap = (rows: { project: string; count: string }[]) =>
-    new Map(rows.map((r) => [r.project, Number(r.count)]));
-  const logMap = toMap(logCounts.rows);
-  const spanMap = toMap(spanCounts.rows);
-  const metricMap = toMap(metricCounts.rows);
-
-  return projects.map((p) => ({
-    name: p.name,
-    createdAt: p.created_at,
-    lastSeenAt: p.last_seen_at,
-    logsCount: logMap.get(p.name) ?? 0,
-    spansCount: spanMap.get(p.name) ?? 0,
-    metricPointsCount: metricMap.get(p.name) ?? 0,
-  }));
+/** For readiness checks: true when the database answers. */
+export async function databaseReady(pool: Pool): Promise<boolean> {
+  try {
+    await pool.query("select 1");
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // --- writes (ingest side) ---------------------------------------------

@@ -93,6 +93,11 @@ sensorium.example.com {
 | `top_sources` | 最常出現的用戶端、國家和路由 |
 | `query_metrics` | 依名稱查 metric 資料點 |
 | `search` | 在 log 和 span 裡做文字搜尋 |
+| `storage_stats` | 資料庫大小、分區，以及沒有資料或被拒收的專案 |
+
+每個工具都是唯讀，並回傳結構化內容。伺服器的資料庫連線也是唯讀。
+
+`GET /ready`（ingest 與 MCP）只在資料庫有回應時回 200。`GET /health` 只代表程序活著。
 
 ## 設定
 

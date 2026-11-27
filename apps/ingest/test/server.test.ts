@@ -172,3 +172,25 @@ describe("ingest per-request database work", () => {
     expect((await app.fetch(post("/v1/logs", logBody()))).status).toBe(200);
   });
 });
+
+describe("ingest readiness and rejections", () => {
+  test("/ready is 200 when the database answers and 503 when it does not", async () => {
+    const up = fakePool(() => ({ rows: [{ "?column?": 1 }] }));
+    expect((await createIngestApp(up.pool).fetch(new Request("http://x/ready"))).status).toBe(200);
+    const down = fakePool(() => dbError("ECONNREFUSED"));
+    expect((await createIngestApp(down.pool).fetch(new Request("http://x/ready"))).status).toBe(503);
+    expect((await createIngestApp(down.pool).fetch(new Request("http://x/health"))).status).toBe(200);
+  });
+
+  test("a refused export is recorded on the project, at most once per interval", async () => {
+    let clock = 1_000_000;
+    const { pool, calls } = fakePool(tokenOk);
+    const app = createIngestApp(pool, { now: () => clock });
+    for (let i = 0; i < 3; i++) expect((await app.fetch(post("/v1/logs", "{nope"))).status).toBe(400);
+    const recorded = () => calls.filter((c) => c.includes("last_rejected_at")).length;
+    expect(recorded()).toBe(1);
+    clock += LAST_SEEN_INTERVAL_MS;
+    await app.fetch(post("/v1/logs", "{nope"));
+    expect(recorded()).toBe(2);
+  });
+});

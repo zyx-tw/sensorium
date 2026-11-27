@@ -14,6 +14,11 @@ export function getPool(config?: PoolConfig): Pool {
   return pool;
 }
 
+/** A pool of its own, outside the singleton (tests that need two sessions with different settings). */
+export function createPool(config: PoolConfig): Pool {
+  return new Pool(config);
+}
+
 export async function closePool(): Promise<void> {
   if (pool) {
     await pool.end();

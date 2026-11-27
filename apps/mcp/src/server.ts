@@ -1,5 +1,5 @@
 import { createMcpHandler, isLegacyRequest, McpServer, WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/server";
-import type { Pool } from "@sensorium/db";
+import { databaseReady, type Pool } from "@sensorium/db";
 import { createMcpAuth, McpAuthError, type McpAuthConfig } from "./auth.js";
 import { registerTools } from "./tools.js";
 
@@ -48,6 +48,12 @@ export function createMcpApp(pool: Pool, auth: McpAuthConfig | ReturnType<typeof
 
     if (req.method === "GET" && url.pathname === "/health") {
       return Response.json({ status: "ok" });
+    }
+
+    if (req.method === "GET" && url.pathname === "/ready") {
+      return (await databaseReady(pool))
+        ? Response.json({ status: "ready" })
+        : Response.json({ status: "database unavailable" }, { status: 503 });
     }
 
     const metadata = gate.metadataResponse(req, url);
