@@ -34,7 +34,8 @@ const OUTPUT = z.object({
 function result(data: unknown, limit?: number): CallToolResult & { structuredContent: z.infer<typeof OUTPUT> } {
   const structuredContent: z.infer<typeof OUTPUT> = { result: data };
   if (limit !== undefined && Array.isArray(data)) structuredContent.truncated = data.length >= limit;
-  return { content: [{ type: "text", text: JSON.stringify(structuredContent) }], structuredContent };
+  // The text stays the bare data, as before structured output: callers such as the hum band parse it.
+  return { content: [{ type: "text", text: JSON.stringify(data) }], structuredContent };
 }
 
 /** Registers the read-only observability tools. All reads are cross-project: every authenticated reader sees every project. */

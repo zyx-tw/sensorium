@@ -53,6 +53,9 @@ describe.skipIf(!DATABASE_URL)("mcp tools (integration, requires DATABASE_URL)",
     const { result } = await call(app, "tools/call", { name: "list_projects", arguments: {} });
     const structured = result.structuredContent as { result: { name: string }[] };
     expect(structured.result.some((p) => p.name === project)).toBe(true);
+    // The text content stays the bare data for callers that parse it.
+    const text = (result.content as { text: string }[])[0]!.text;
+    expect(JSON.parse(text)).toEqual(structured.result);
   });
 
   test("storage_stats reports each partitioned table and the silent project", async () => {
@@ -71,6 +74,6 @@ describe.skipIf(!DATABASE_URL)("mcp tools (integration, requires DATABASE_URL)",
   });
 
   test("the MCP database session refuses writes", async () => {
-    expect(readOnly.query("insert into projects (name, ingest_token_hash) values ('x', 'y')")).rejects.toThrow(/read-only/);
+    await expect(readOnly.query("insert into projects (name, ingest_token_hash) values ('x', 'y')")).rejects.toThrow(/read-only/);
   });
 });
