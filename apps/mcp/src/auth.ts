@@ -73,14 +73,21 @@ function safeEqual(a: string, b: string): boolean {
 
 type KeySet = JWTVerifyGetKey;
 
+/** How long a failed discovery is reused before the issuer is asked again. */
+export const DISCOVERY_RETRY_MS = 5_000;
+
 export function createMcpAuth(config: McpAuthConfig, keySet?: KeySet) {
   const { oidc } = config;
   let keys: KeySet | undefined = keySet;
   let keysPending: Promise<KeySet> | undefined;
+  // A failed discovery is remembered for a few seconds, so an issuer that is
+  // down is not asked again on every request.
+  let failed: { at: number; error: unknown } | undefined;
 
   /** The issuer's key set, from its discovery document (fetched once). */
   async function issuerKeys(): Promise<KeySet> {
     if (keys) return keys;
+    if (failed && Date.now() - failed.at < DISCOVERY_RETRY_MS) throw failed.error;
     keysPending ??= (async () => {
       const res = await fetch(`${oidc!.issuer}/.well-known/openid-configuration`, {
         signal: AbortSignal.timeout(5_000),
@@ -89,7 +96,10 @@ export function createMcpAuth(config: McpAuthConfig, keySet?: KeySet) {
       const { jwks_uri } = (await res.json()) as { jwks_uri?: string };
       if (!jwks_uri) throw new Error("discovery has no jwks_uri");
       return (keys = createRemoteJWKSet(new URL(jwks_uri)));
-    })().finally(() => {
+    })().catch((error: unknown) => {
+      failed = { at: Date.now(), error };
+      throw error;
+    }).finally(() => {
       keysPending = undefined;
     });
     return keysPending;
@@ -185,6 +195,7 @@ export function createMcpAuth(config: McpAuthConfig, keySet?: KeySet) {
         ? `Bearer resource_metadata="${meta}", error="invalid_token"`
         : `Bearer error="invalid_token"`;
     }
+    if (err.status === 403) headers["www-authenticate"] = `Bearer error="insufficient_scope"`;
     if (err.status === 503) headers["retry-after"] = "5";
     return Response.json({ jsonrpc: "2.0", error: { code: -32000, message: err.message }, id: null }, { status: err.status, headers });
   }

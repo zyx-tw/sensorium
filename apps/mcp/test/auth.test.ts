@@ -111,6 +111,25 @@ describe("mcp auth", () => {
     expect(res.headers.get("retry-after")).toBe("5");
   });
 
+  test("a failed discovery is not retried on every request", async () => {
+    let hits = 0;
+    const issuer = Bun.serve({ port: 0, fetch: () => (hits++, new Response("down", { status: 500 })) });
+    try {
+      const auth = createMcpAuth({ ...oidcConfig, oidc: { ...oidcConfig.oidc!, issuer: `http://127.0.0.1:${issuer.port}` } });
+      const app = createMcpApp(fakePool, auth);
+      for (let i = 0; i < 3; i++) expect((await app.fetch(mcp(`Bearer ${await token(reader)}`))).status).toBe(503);
+      expect(hits).toBe(1);
+    } finally {
+      issuer.stop(true);
+    }
+  });
+
+  test("a 403 tells the client the scope is insufficient", async () => {
+    const res = await app.fetch(mcp(`Bearer ${await token({ realm_access: { roles: ["member"] } })}`));
+    expect(res.status).toBe(403);
+    expect(res.headers.get("www-authenticate")).toBe(`Bearer error="insufficient_scope"`);
+  });
+
   test("the protected resource metadata names the issuer", async () => {
     const res = await app.fetch(new Request("http://x/.well-known/oauth-protected-resource/mcp"));
     expect(res.status).toBe(200);
