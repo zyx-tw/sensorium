@@ -211,6 +211,9 @@ describe.skipIf(!DATABASE_URL)("0008 metric series (integration, requires DATABA
       "select count(distinct s.id)::int series, count(*)::int points from metric_samples p join metric_series s on s.id = p.series_id where s.metric_name = 'compat'",
     );
     expect(rows[0]).toEqual({ series: 1, points: 3 });
+    // 0010: the trigger upserts its mark, so a concurrent recompute waits for it.
+    const { rows: fn } = await pool.query("select prosrc from pg_proc where proname = 'metric_points_insert'");
+    expect(fn[0].prosrc).toContain("do update set bucket = excluded.bucket");
     // The hour-old row is marked for the rollup like a late point from ingest.
     expect(await oldestDirtyBucket(pool)).not.toBeNull();
     await rollUpMetrics(pool);
