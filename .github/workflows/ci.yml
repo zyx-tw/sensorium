@@ -45,7 +45,7 @@ jobs:
       contents: read
       packages: write
     with:
-      images: '[{"name": "ghcr.io/zyx1121/sensorium"}]'
+      images: '[{"name": "ghcr.io/zyx-tw/sensorium"}]'
       smoke: bash deploy/smoke.sh
 
   promote:
@@ -55,4 +55,4 @@ jobs:
       contents: read
       packages: write
     with:
-      images: '["ghcr.io/zyx1121/sensorium"]'
+      images: '["ghcr.io/zyx-tw/sensorium"]'

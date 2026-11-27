@@ -6,10 +6,10 @@
 
 <p><strong>給 agent 用的可觀測性：OpenTelemetry 進，MCP 出。</strong></p>
 
-[![CI](https://img.shields.io/github/actions/workflow/status/zyx1121/sensorium/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/zyx1121/sensorium/actions)
-[![Image](https://img.shields.io/badge/ghcr.io-zyx1121%2Fsensorium-111111?style=flat-square&logo=docker&logoColor=white)](https://github.com/zyx1121/sensorium/pkgs/container/sensorium)
+[![CI](https://img.shields.io/github/actions/workflow/status/zyx-tw/sensorium/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/zyx-tw/sensorium/actions)
+[![Image](https://img.shields.io/badge/ghcr.io-zyx--tw%2Fsensorium-111111?style=flat-square&logo=docker&logoColor=white)](https://github.com/zyx-tw/sensorium/pkgs/container/sensorium)
 [![Live](https://img.shields.io/badge/live-sensorium.zyx.tw-000000?style=flat-square)](https://sensorium.zyx.tw)
-[![License](https://img.shields.io/github/license/zyx1121/sensorium?style=flat-square)](LICENSE)
+[![License](https://img.shields.io/github/license/zyx-tw/sensorium?style=flat-square)](LICENSE)
 
 [English](README.md) | **繁體中文** | [简体中文](README.zh-CN.md)
 
@@ -32,13 +32,13 @@ $ error_summary { "project": "reel", "windowMinutes": 1440 }
 ## 快速開始
 
 ```sh
-curl -fsSLO https://raw.githubusercontent.com/zyx1121/sensorium/main/compose.yaml
-curl -fsSL -o .env https://raw.githubusercontent.com/zyx1121/sensorium/main/.env.example
+curl -fsSLO https://raw.githubusercontent.com/zyx-tw/sensorium/main/compose.yaml
+curl -fsSL -o .env https://raw.githubusercontent.com/zyx-tw/sensorium/main/.env.example
 # 在 .env 設定 POSTGRES_PASSWORD 和 SENSORIUM_MCP_TOKEN，例如用 `openssl rand -hex 32` 產生
 docker compose up -d
 ```
 
-這會啟動 Postgres 並套用 schema，同時從 `ghcr.io/zyx1121/sensorium` 執行 8787 port 的接收端、8788 port 的 MCP 端點，以及每 24 小時一次的清除工作。
+這會啟動 Postgres 並套用 schema，同時從 `ghcr.io/zyx-tw/sensorium` 執行 8787 port 的接收端、8788 port 的 MCP 端點，以及每 24 小時一次的清除工作。
 
 > [!IMPORTANT]
 > 兩個 port 都只聽 127.0.0.1，權杖放在 Authorization 標頭裡傳送。在機器外的任何東西連進來之前，前面要先放一個有 TLS 的反向代理。

@@ -6,10 +6,10 @@
 
 <p><strong>给 agent 用的可观测性：OpenTelemetry 进，MCP 出。</strong></p>
 
-[![CI](https://img.shields.io/github/actions/workflow/status/zyx1121/sensorium/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/zyx1121/sensorium/actions)
-[![Image](https://img.shields.io/badge/ghcr.io-zyx1121%2Fsensorium-111111?style=flat-square&logo=docker&logoColor=white)](https://github.com/zyx1121/sensorium/pkgs/container/sensorium)
+[![CI](https://img.shields.io/github/actions/workflow/status/zyx-tw/sensorium/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/zyx-tw/sensorium/actions)
+[![Image](https://img.shields.io/badge/ghcr.io-zyx--tw%2Fsensorium-111111?style=flat-square&logo=docker&logoColor=white)](https://github.com/zyx-tw/sensorium/pkgs/container/sensorium)
 [![Live](https://img.shields.io/badge/live-sensorium.zyx.tw-000000?style=flat-square)](https://sensorium.zyx.tw)
-[![License](https://img.shields.io/github/license/zyx1121/sensorium?style=flat-square)](LICENSE)
+[![License](https://img.shields.io/github/license/zyx-tw/sensorium?style=flat-square)](LICENSE)
 
 [English](README.md) | [繁體中文](README.zh-TW.md) | **简体中文**
 
@@ -32,13 +32,13 @@ $ error_summary { "project": "reel", "windowMinutes": 1440 }
 ## 快速开始
 
 ```sh
-curl -fsSLO https://raw.githubusercontent.com/zyx1121/sensorium/main/compose.yaml
-curl -fsSL -o .env https://raw.githubusercontent.com/zyx1121/sensorium/main/.env.example
+curl -fsSLO https://raw.githubusercontent.com/zyx-tw/sensorium/main/compose.yaml
+curl -fsSL -o .env https://raw.githubusercontent.com/zyx-tw/sensorium/main/.env.example
 # 在 .env 设置 POSTGRES_PASSWORD 和 SENSORIUM_MCP_TOKEN，例如用 `openssl rand -hex 32` 生成
 docker compose up -d
 ```
 
-这会启动 Postgres 并应用 schema，同时从 `ghcr.io/zyx1121/sensorium` 运行 8787 端口的接收端、8788 端口的 MCP 端点，以及每 24 小时一次的清理任务。
+这会启动 Postgres 并应用 schema，同时从 `ghcr.io/zyx-tw/sensorium` 运行 8787 端口的接收端、8788 端口的 MCP 端点，以及每 24 小时一次的清理任务。
 
 > [!IMPORTANT]
 > 两个端口都只监听 127.0.0.1，令牌放在 Authorization 请求头里传送。在机器外的任何东西连进来之前，前面要先放一个带 TLS 的反向代理。

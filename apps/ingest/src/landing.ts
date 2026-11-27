@@ -73,7 +73,7 @@ const PAGE: { title: string; tagline: string; sections: { heading: string; block
           steps: [
             {
               text: "On any machine with Docker, fetch the compose file and the env example. Set `POSTGRES_PASSWORD` and `SENSORIUM_MCP_TOKEN` in `.env`.",
-              code: "curl -fsSLO https://raw.githubusercontent.com/zyx1121/sensorium/main/compose.yaml\ncurl -fsSL -o .env https://raw.githubusercontent.com/zyx1121/sensorium/main/.env.example",
+              code: "curl -fsSLO https://raw.githubusercontent.com/zyx-tw/sensorium/main/compose.yaml\ncurl -fsSL -o .env https://raw.githubusercontent.com/zyx-tw/sensorium/main/.env.example",
             },
             {
               text: "Start it. The receiver on port 8787, the MCP endpoint on port 8788 and a daily retention sweep come up from one image, beside Postgres.",
@@ -112,7 +112,7 @@ const PAGE: { title: string; tagline: string; sections: { heading: string; block
       heading: "Configure",
       blocks: [
         {
-          p: "Every setting is an environment variable in `.env`. `POSTGRES_PASSWORD` and `SENSORIUM_MCP_TOKEN` are required, and the `SENSORIUM_RETENTION_*_DAYS` keys set how long data stays. [.env.example](https://github.com/zyx1121/sensorium/blob/main/.env.example) documents every key.",
+          p: "Every setting is an environment variable in `.env`. `POSTGRES_PASSWORD` and `SENSORIUM_MCP_TOKEN` are required, and the `SENSORIUM_RETENTION_*_DAYS` keys set how long data stays. [.env.example](https://github.com/zyx-tw/sensorium/blob/main/.env.example) documents every key.",
         },
       ],
     },
@@ -122,7 +122,7 @@ const PAGE: { title: string; tagline: string; sections: { heading: string; block
 const escape = (text: string) =>
   text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
-const REPO = "https://github.com/zyx1121/sensorium";
+const REPO = "https://github.com/zyx-tw/sensorium";
 
 /** Attributes for a link: one that leaves zyx.tw opens in a new tab with no referrer. */
 const target = (href: string) =>
@@ -150,7 +150,7 @@ const inline = (text: string) =>
  */
 const TIPS = {
   mark: "www.zyx.tw",
-  github: "zyx1121/sensorium",
+  github: "zyx-tw/sensorium",
   privacy: "What we store",
   terms: "The rules",
   copyright: "Loki",

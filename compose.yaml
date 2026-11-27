@@ -11,7 +11,7 @@
 name: sensorium
 
 x-sensorium: &sensorium
-  image: ghcr.io/zyx1121/sensorium:${SENSORIUM_VERSION:-latest}
+  image: ghcr.io/zyx-tw/sensorium:${SENSORIUM_VERSION:-latest}
   init: true
   restart: unless-stopped
   env_file: .env
