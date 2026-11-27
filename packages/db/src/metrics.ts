@@ -228,14 +228,20 @@ function bucketFloor(ms: number): number {
 /**
  * Folds finished 5-minute buckets of metric_samples into metric_rollups.
  * The last few buckets before the previous run are computed again, so a point
- * that arrived up to 15 minutes late still counts. Returns the new rolled_until.
+ * that arrived up to 15 minutes late still counts, and buckets marked by later
+ * points are recomputed. samplesFrom is where retention keeps raw samples from:
+ * marks before it are dropped. Returns the new rolled_until.
  */
-export async function rollUpMetrics(pool: Pool, now = new Date()): Promise<{ from: Date; until: Date; buckets: number }> {
+export async function rollUpMetrics(
+  pool: Pool,
+  now = new Date(),
+  samplesFrom?: Date,
+): Promise<{ from: Date; until: Date; buckets: number }> {
   const previous = (await rolledUntil(pool)).getTime();
   // A bucket is final once a whole bucket has passed since its end.
   const until = bucketFloor(now.getTime() - ROLLUP_BUCKET_SECONDS * 1000);
   const from = bucketFloor(previous - ROLLUP_LATE_MS);
-  let buckets = await rollUpDirty(pool);
+  let buckets = await rollUpDirty(pool, samplesFrom);
   for (let start = from; start < until; start += ROLLUP_CHUNK_MS) {
     const end = Math.min(until, start + ROLLUP_CHUNK_MS);
     const res = await pool.query(`${ROLLUP_SQL} where ts >= $1 and ts < $2 ${ROLLUP_UPSERT}`, [new Date(start), new Date(end)]);
@@ -255,8 +261,12 @@ const ROLLUP_UPSERT = `group by 1, 2
     set count = excluded.count, sum = excluded.sum, min = excluded.min, max = excluded.max, last = excluded.last`;
 
 /** Recomputes the buckets that got late points, 200 at a time; each batch clears its marks in the same transaction. */
-async function rollUpDirty(pool: Pool): Promise<number> {
+async function rollUpDirty(pool: Pool, samplesFrom?: Date): Promise<number> {
   let buckets = 0;
+  // Before samplesFrom, retention has dropped the raw samples. Recomputing such a
+  // bucket from the few late points left would overwrite a complete rollup, so
+  // its mark is dropped and the rollup stays as it was.
+  if (samplesFrom) await pool.query("delete from metric_rollup_dirty where bucket < $1", [samplesFrom]);
   for (;;) {
     const client = await pool.connect();
     try {

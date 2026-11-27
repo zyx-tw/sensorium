@@ -290,7 +290,8 @@ export async function runRetention(
   now = new Date(),
 ): Promise<RetentionReport> {
   // Rollups first: a samples partition is dropped only once it is rolled up.
-  const rollup = await rollUpMetrics(pool, now);
+  // Raw samples before this day are gone or about to be: dropExpiredPartitions uses the same cutoff.
+  const rollup = await rollUpMetrics(pool, now, utcDay(now, -config.metricDays));
   // Samples are kept until they are rolled up: up to rolled_until, and before any bucket still marked dirty.
   const dirty = await oldestDirtyBucket(pool);
   const rolledAt = await rolledUntil(pool);

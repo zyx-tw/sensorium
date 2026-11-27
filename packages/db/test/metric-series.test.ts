@@ -181,6 +181,24 @@ describe.skipIf(!DATABASE_URL)("0008 metric series (integration, requires DATABA
     expect(rows).toEqual([{ count: 1, last: 42 }]);
   });
 
+  test("a point older than the raw samples leaves its complete rollup alone", async () => {
+    const ts = new Date(Date.now() - 30 * 86_400_000);
+    await insertMetricPoints(pool, [point({ metricName: "ancient", ts: new Date(), value: 1 })]);
+    const { rows: series } = await pool.query("select id from metric_series where metric_name = 'ancient'");
+    const bucket = new Date(Math.floor(ts.getTime() / 300_000) * 300_000);
+    // The rollup from when this day still had its samples: 2 points.
+    await pool.query("insert into metric_rollups values ($1, $2, 2, 30, 10, 20, 20)", [series[0].id, bucket]);
+    await insertMetricPoints(pool, [point({ metricName: "ancient", ts, value: 20 })]);
+    // Raw samples are kept for 7 days, so the 30-day-old bucket cannot be recomputed.
+    await rollUpMetrics(pool, new Date(), new Date(Date.now() - 7 * 86_400_000));
+    expect(await oldestDirtyBucket(pool)).toBeNull();
+    const { rows } = await pool.query("select count, sum from metric_rollups where series_id = $1 and bucket = $2", [
+      series[0].id,
+      bucket,
+    ]);
+    expect(rows).toEqual([{ count: 2, sum: 30 }]);
+  });
+
   test("an ingest from before 0008 still writes through the view, into the same series", async () => {
     await insertMetricPoints(pool, [point({ metricName: "compat", value: 1, attributes: { host: "a", core: 0 } })]);
     await pool.query(
