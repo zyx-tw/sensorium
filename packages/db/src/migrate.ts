@@ -13,10 +13,16 @@ create table if not exists schema_migrations (
 `;
 
 /** Applies every *.sql file in migrations/ that isn't already recorded in schema_migrations. Safe to re-run. */
-export async function runMigrations(pool: Pool): Promise<{ applied: string[]; skipped: string[] }> {
+export async function runMigrations(
+  pool: Pool,
+  { until }: { until?: string } = {},
+): Promise<{ applied: string[]; skipped: string[] }> {
   await pool.query(BOOTSTRAP_SQL);
 
-  const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
+  // `until` (inclusive) stops early, so a test can build an older schema and then migrate it.
+  const files = (await readdir(MIGRATIONS_DIR))
+    .filter((f) => f.endsWith(".sql") && (until === undefined || f <= until))
+    .sort();
   const { rows } = await pool.query<{ filename: string }>("select filename from schema_migrations");
   const applied = new Set(rows.map((r) => r.filename));
 
