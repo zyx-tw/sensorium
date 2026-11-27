@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { LogRow, MetricPointRow, SpanRow } from "@sensorium/core";
 import type { Pool } from "pg";
+import { PARTITIONED_TABLES, partitionPrefix, type PartitionedTable } from "./retention.js";
 
 export function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
@@ -67,6 +68,8 @@ export interface TableStorage {
 export interface StorageStats {
   databaseBytes: number;
   tables: TableStorage[];
+  /** Distinct metric series (planner estimate) and how far the 5-minute rollups are complete. */
+  metrics: { series: number; rolledUntil: Date | null };
   /** Projects with no ingest in the last hour, oldest first. */
   silentProjects: { name: string; lastSeenAt: Date | null }[];
   /** Projects whose exports ingest refused in the last 24 hours (bad body, too large, wrong type), newest first. */
@@ -77,24 +80,26 @@ export interface StorageStats {
 export async function storageStats(pool: Pool): Promise<StorageStats> {
   const { rows: db } = await pool.query<{ bytes: string }>("select pg_database_size(current_database()) as bytes");
   const tables: TableStorage[] = [];
-  for (const table of ["metric_points", "spans", "logs"]) {
+  const { rows: legacy } = await pool.query<{ ok: boolean }>("select to_regclass('metric_points_legacy') is not null as ok");
+  const all: PartitionedTable[] = [...PARTITIONED_TABLES, ...(legacy[0]!.ok ? (["metric_points_legacy"] as const) : [])];
+  for (const table of all) {
+    const prefix = partitionPrefix(table);
     const { rows } = await pool.query<{ bytes: string | null; partitions: string; oldest: string | null; newest: string | null }>(
       `select sum(pg_total_relation_size(c.oid)) as bytes,
-              count(*) filter (where c.relname ~ ('^' || $1 || '_[0-9]{8}$')) as partitions,
+              count(*) filter (where c.relname ~ ('^' || $2 || '_[0-9]{8}$')) as partitions,
               min(substring(c.relname from '([0-9]{8})$')) as oldest,
               max(substring(c.relname from '([0-9]{8})$')) as newest
          from pg_inherits i
          join pg_class c on c.oid = i.inhrelid
         where i.inhparent = $1::regclass`,
-      [table],
+      [table, prefix],
     );
     const r = rows[0]!;
     const day = (d: string | null) => (d ? `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}` : null);
     const newestDay = day(r.newest);
-    // A table not yet partitioned (before migration 0006) has no default partition.
-    const { rows: hasDefault } = await pool.query<{ ok: boolean }>(`select to_regclass($1) is not null as ok`, [`${table}_default`]);
+    const { rows: hasDefault } = await pool.query<{ ok: boolean }>(`select to_regclass($1) is not null as ok`, [`${prefix}_default`]);
     const { rows: def } = hasDefault[0]!.ok
-      ? await pool.query<{ n: string }>(`select count(*) as n from (select 1 from ${table}_default limit 100000) d`)
+      ? await pool.query<{ n: string }>(`select count(*) as n from (select 1 from ${prefix}_default limit 100000) d`)
       : { rows: [{ n: "0" }] };
     tables.push({
       table,
@@ -108,6 +113,8 @@ export async function storageStats(pool: Pool): Promise<StorageStats> {
       defaultRows: Number(def[0]?.n ?? 0),
     });
   }
+  const { rows: series } = await pool.query<{ n: string }>("select reltuples::bigint as n from pg_class where oid = 'metric_series'::regclass");
+  const { rows: progress } = await pool.query<{ rolled_until: Date }>("select rolled_until from metric_rollup_progress");
   const { rows: silent } = await pool.query<{ name: string; last_seen_at: Date | null }>(
     `select name, last_seen_at from projects
       where last_seen_at is null or last_seen_at < now() - interval '1 hour'
@@ -126,6 +133,10 @@ export async function storageStats(pool: Pool): Promise<StorageStats> {
   return {
     databaseBytes: Number(db[0]!.bytes),
     tables,
+    metrics: {
+      series: Math.max(0, Number(series[0]?.n ?? 0)),
+      rolledUntil: progress[0]?.rolled_until ?? null,
+    },
     silentProjects: silent.map((p) => ({ name: p.name, lastSeenAt: p.last_seen_at })),
     rejectedProjects: rejected.map((p) => ({
       name: p.name,
@@ -261,26 +272,6 @@ export async function insertSpans(pool: Pool, rows: SpanRow[]): Promise<number> 
       row.httpStatusCode,
       JSON.stringify(row.resource),
       JSON.stringify(row.attributes),
-    ]),
-  );
-  return rows.length;
-}
-
-export async function insertMetricPoints(pool: Pool, rows: MetricPointRow[]): Promise<number> {
-  if (rows.length === 0) return 0;
-  const columns = ["project", "metric_name", "ts", "kind", "value", "attributes", "resource"];
-  await insertChunked(
-    pool,
-    (tuples) => `insert into metric_points (${columns.join(", ")}) values ${tuples}`,
-    columns.length,
-    rows.map((row) => [
-      row.project,
-      row.metricName,
-      row.ts,
-      row.kind,
-      row.value,
-      JSON.stringify(row.attributes),
-      JSON.stringify(row.resource),
     ]),
   );
   return rows.length;

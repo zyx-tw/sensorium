@@ -1,4 +1,5 @@
 import type { Pool } from "pg";
+import { rollUpMetrics, rolledUntil } from "./metrics.js";
 
 /**
  * Age-based expiry for the three signal tables.
@@ -11,19 +12,36 @@ import type { Pool } from "pg";
  * costs disk, not correctness, and the next run catches up.
  */
 
-/** A table partitioned by UTC day into <table>_YYYYMMDD, with <table>_default as a backstop. */
-export type PartitionedTable = "metric_points" | "spans" | "logs";
+/**
+ * A table partitioned by UTC day into <prefix>_YYYYMMDD, with <prefix>_default
+ * as a backstop. The prefix is the table name, except for metric_points_legacy:
+ * migration 0008 renamed the old metric_points, and its partitions kept their names.
+ */
+export type PartitionedTable = "metric_samples" | "metric_rollups" | "metric_points_legacy" | "spans" | "logs";
 
-export const PARTITIONED_TABLES: readonly PartitionedTable[] = ["metric_points", "spans", "logs"];
+/** Tables that take new rows, so retention keeps partitions ahead of them. */
+export const PARTITIONED_TABLES: readonly PartitionedTable[] = ["metric_samples", "metric_rollups", "spans", "logs"];
 
-/** <table>_YYYYMMDD; the default partition deliberately does not match. */
+export function partitionPrefix(table: PartitionedTable): string {
+  return table === "metric_points_legacy" ? "metric_points" : table;
+}
+
+export function partitionColumn(table: PartitionedTable): string {
+  if (table === "spans") return "start_ts";
+  if (table === "metric_rollups") return "bucket";
+  return "ts";
+}
+
+/** <prefix>_YYYYMMDD; the default partition deliberately does not match. */
 function partitionRe(table: PartitionedTable): RegExp {
-  return new RegExp(`^${table}_(\\d{4})(\\d{2})(\\d{2})$`);
+  return new RegExp(`^${partitionPrefix(table)}_(\\d{4})(\\d{2})(\\d{2})$`);
 }
 
 export interface RetentionConfig {
-  /** Days of raw metric points to keep. ~2.4GB/day for one busy PVE project. */
+  /** Days of raw metric samples to keep. */
   metricDays: number;
+  /** Days of 5-minute metric rollups to keep. */
+  rollupDays: number;
   spanDays: number;
   logDays: number;
   /** How many days of partitions to keep pre-created ahead of now. */
@@ -32,6 +50,7 @@ export interface RetentionConfig {
 
 export const DEFAULT_RETENTION: RetentionConfig = {
   metricDays: 14,
+  rollupDays: 90,
   spanDays: 30,
   logDays: 30,
   aheadDays: 7,
@@ -57,6 +76,7 @@ export function retentionConfigFromEnv(
       "SENSORIUM_RETENTION_METRIC_DAYS",
       DEFAULT_RETENTION.metricDays,
     ),
+    rollupDays: num("SENSORIUM_RETENTION_ROLLUP_DAYS", DEFAULT_RETENTION.rollupDays),
     spanDays: num("SENSORIUM_RETENTION_SPAN_DAYS", DEFAULT_RETENTION.spanDays),
     logDays: num("SENSORIUM_RETENTION_LOG_DAYS", DEFAULT_RETENTION.logDays),
     aheadDays: num(
@@ -81,15 +101,15 @@ export function utcDay(from: Date, offsetDays = 0): Date {
   );
 }
 
-export function partitionName(day: Date, table: PartitionedTable = "metric_points"): string {
+export function partitionName(day: Date, table: PartitionedTable = "metric_samples"): string {
   const y = day.getUTCFullYear().toString().padStart(4, "0");
   const m = (day.getUTCMonth() + 1).toString().padStart(2, "0");
   const d = day.getUTCDate().toString().padStart(2, "0");
-  return `${table}_${y}${m}${d}`;
+  return `${partitionPrefix(table)}_${y}${m}${d}`;
 }
 
 /** Inverse of partitionName; null for anything that is not a daily partition. */
-export function partitionDay(name: string, table: PartitionedTable = "metric_points"): Date | null {
+export function partitionDay(name: string, table: PartitionedTable = "metric_samples"): Date | null {
   const m = partitionRe(table).exec(name);
   if (!m) return null;
   return new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
@@ -139,7 +159,7 @@ export async function ensurePartitions(
   pool: Pool,
   aheadDays: number,
   now = new Date(),
-  table: PartitionedTable = "metric_points",
+  table: PartitionedTable = "metric_samples",
 ): Promise<string[]> {
   // Checked against the catalog rather than leaning on `if not exists`, whose
   // result still reports CREATE for a table that was already there — the
@@ -165,7 +185,9 @@ export async function dropExpiredPartitions(
   pool: Pool,
   keepDays: number,
   now = new Date(),
-  table: PartitionedTable = "metric_points",
+  table: PartitionedTable = "metric_samples",
+  /** Never drop a partition that ends after this instant (samples not rolled up yet). */
+  keepAfter?: Date,
 ): Promise<string[]> {
   const cutoff = utcDay(now, -keepDays);
   const dropped: string[] = [];
@@ -174,6 +196,7 @@ export async function dropExpiredPartitions(
     // A partition covers [day, day+1), so it is only fully expired once its
     // end is at or before the cutoff. Never drop a day still partly in window.
     if (!day || utcDay(day, 1) > cutoff) continue;
+    if (keepAfter && utcDay(day, 1) > keepAfter) continue;
     await pool.query(`drop table ${name}`);
     dropped.push(name);
   }
@@ -193,12 +216,12 @@ export async function dropExpiredPartitions(
  */
 export async function drainDefaultPartition(
   pool: Pool,
-  table: PartitionedTable = "metric_points",
+  table: PartitionedTable = "metric_samples",
   keepDays?: number,
   now = new Date(),
 ): Promise<number> {
-  const defaultPartition = `${table}_default`;
-  const column = table === "spans" ? "start_ts" : "ts";
+  const defaultPartition = `${partitionPrefix(table)}_default`;
+  const column = partitionColumn(table);
   // Rows already past retention are deleted rather than given a partition of their own.
   if (keepDays !== undefined) {
     await pool.query(`delete from ${defaultPartition} where ${column} < $1`, [utcDay(now, -keepDays).toISOString()]);
@@ -249,11 +272,15 @@ export interface TableRetention {
   defaultRowsRescued: number;
 }
 
-export type RetentionReport = Record<PartitionedTable, TableRetention>;
+export interface RetentionReport {
+  tables: Partial<Record<PartitionedTable, TableRetention>>;
+  rollup: { from: Date; until: Date; buckets: number };
+}
 
 export function keepDaysFor(table: PartitionedTable, config: RetentionConfig): number {
   if (table === "spans") return config.spanDays;
   if (table === "logs") return config.logDays;
+  if (table === "metric_rollups") return config.rollupDays;
   return config.metricDays;
 }
 
@@ -262,14 +289,29 @@ export async function runRetention(
   config: RetentionConfig = DEFAULT_RETENTION,
   now = new Date(),
 ): Promise<RetentionReport> {
-  const report = {} as RetentionReport;
+  // Rollups first: a samples partition is dropped only once it is rolled up.
+  const rollup = await rollUpMetrics(pool, now);
+  const rolled = await rolledUntil(pool);
+  const tables: RetentionReport["tables"] = {};
   for (const table of PARTITIONED_TABLES) {
     // Order matters: rescue before dropping, so a rescued row from an expired
     // day is dropped in the same run instead of lingering a day longer.
     const defaultRowsRescued = await drainDefaultPartition(pool, table, keepDaysFor(table, config), now);
     const partitionsCreated = await ensurePartitions(pool, config.aheadDays, now, table);
-    const partitionsDropped = await dropExpiredPartitions(pool, keepDaysFor(table, config), now, table);
-    report[table] = { partitionsCreated, partitionsDropped, defaultRowsRescued };
+    const partitionsDropped = await dropExpiredPartitions(
+      pool,
+      keepDaysFor(table, config),
+      now,
+      table,
+      table === "metric_samples" ? rolled : undefined,
+    );
+    tables[table] = { partitionsCreated, partitionsDropped, defaultRowsRescued };
   }
-  return report;
+  // The pre-0008 metric table takes no new rows: its days only expire.
+  const { rows } = await pool.query<{ ok: boolean }>("select to_regclass('metric_points_legacy') is not null as ok");
+  if (rows[0]!.ok) {
+    const partitionsDropped = await dropExpiredPartitions(pool, config.metricDays, now, "metric_points_legacy");
+    tables.metric_points_legacy = { partitionsCreated: [], partitionsDropped, defaultRowsRescued: 0 };
+  }
+  return { tables, rollup };
 }

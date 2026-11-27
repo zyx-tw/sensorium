@@ -2,6 +2,7 @@ import type { CallToolResult, McpServer } from "@modelcontextprotocol/server";
 import { buildSpanTree } from "@sensorium/core";
 import {
   agentUsage,
+  queryMetricBuckets,
   errorSummary,
   listMetricNames,
   listProjects,
@@ -219,7 +220,10 @@ export function registerTools(server: McpServer, pool: Pool): void {
         "producer reports. With metricName: whole-window min/max/avg/count plus raw points, newest first, up " +
         "to limit (summary ignores limit). A metric with several series (e.g. hostmetrics' per-cpu/per-state " +
         "points) interleaves them — the labels live in each point's attributes, so group client-side for " +
-        "per-series numbers. A histogram or summary is stored as its sum under the metric name plus <name>.count, .min, .max and .quantile.",
+        "per-series numbers. A histogram or summary is stored as its sum under the metric name plus <name>.count, .min, .max and .quantile. " +
+        "With metricName and step (seconds, a multiple of 300): buckets per series (count, avg, min, max, last), newest first, up to limit " +
+        "per series; use it for long windows, since raw points are kept for days and 5-minute rollups for months. For a cumulative " +
+        "counter, compare `last` between buckets.",
       annotations: READ_ONLY,
       outputSchema: OUTPUT,
       inputSchema: z.object({
@@ -233,12 +237,23 @@ export function registerTools(server: McpServer, pool: Pool): void {
                 .positive()
                 .max(1000)
                 .optional()
-                .describe("max points returned when metricName is set (default 100)"),
+                .describe("max points returned when metricName is set (default 100); with step, max buckets per series (default 288)"),
+              step: z
+                .number()
+                .int()
+                .min(300)
+                .max(86_400 * 7)
+                .multipleOf(300)
+                .optional()
+                .describe("bucket width in seconds, a multiple of 300; needs metricName"),
             }),
     },
-    async ({ project, metricName, since, until, limit }) => {
+    async ({ project, metricName, since, until, limit, step }) => {
       const window = { project, since: new Date(since), until: until ? new Date(until) : undefined };
       if (!metricName) return result(await listMetricNames(pool, window));
+      if (step) {
+        return result({ project, metricName, step, series: await queryMetricBuckets(pool, { ...window, metricName, stepSeconds: step, limit }) });
+      }
       return result(await queryMetrics(pool, { ...window, metricName, limit }));
     },
   );

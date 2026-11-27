@@ -37,9 +37,10 @@ async function main() {
       const config = retentionConfigFromEnv();
       const report = await runRetention(pool, config);
       console.log(
-        `retention: keep metrics ${config.metricDays}d, spans ${config.spanDays}d, logs ${config.logDays}d`,
+        `retention: keep metrics ${config.metricDays}d, rollups ${config.rollupDays}d, spans ${config.spanDays}d, logs ${config.logDays}d`,
       );
-      for (const [table, r] of Object.entries(report)) {
+      console.log(`rollups: ${report.rollup.buckets} buckets, complete until ${report.rollup.until.toISOString()}`);
+      for (const [table, r] of Object.entries(report.tables)) {
         console.log(
           `${table}: created ${r.partitionsCreated.length}, dropped ${r.partitionsDropped.join(", ") || "(none)"}` +
             (r.defaultRowsRescued > 0 ? `, rescued ${r.defaultRowsRescued} rows from the default partition` : ""),

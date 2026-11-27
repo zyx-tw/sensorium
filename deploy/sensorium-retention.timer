@@ -1,10 +1,9 @@
 [Unit]
-Description=Daily sensorium retention sweep
+Description=Hourly sensorium retention sweep (metric rollups included)
 
 [Timer]
-# 03:20 UTC: after the day boundary the partitions are keyed on, and clear of
-# the apt/logrotate timers that cluster on the hour.
-OnCalendar=*-*-* 03:20:00 UTC
+# 20 minutes past every hour: clear of the timers that cluster on the hour.
+OnCalendar=*-*-* *:20:00 UTC
 Persistent=true
 
 [Install]
