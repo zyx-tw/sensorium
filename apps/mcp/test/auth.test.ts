@@ -130,6 +130,19 @@ describe("mcp auth", () => {
     expect(res.headers.get("www-authenticate")).toBe(`Bearer error="insufficient_scope"`);
   });
 
+  test("a 2025 client gets one JSON body, not an SSE stream", async () => {
+    const res = await app.fetch(mcp("Bearer static-secret"));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("application/json");
+    const body = (await res.json()) as { result: { tools: unknown[] } };
+    expect(body.result.tools.length).toBeGreaterThan(0);
+  });
+
+  test("a body that is not JSON is a parse error", async () => {
+    const res = await app.fetch(new Request("http://x/mcp", { method: "POST", headers: { authorization: "Bearer static-secret", "content-type": "application/json" }, body: "{" }));
+    expect(res.status).toBe(400);
+  });
+
   test("the protected resource metadata names the issuer", async () => {
     const res = await app.fetch(new Request("http://x/.well-known/oauth-protected-resource/mcp"));
     expect(res.status).toBe(200);
