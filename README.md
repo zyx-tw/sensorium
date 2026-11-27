@@ -106,7 +106,7 @@ Set these in `.env`. [.env.example](.env.example) documents each one.
 |-----|------|---------|
 | `POSTGRES_PASSWORD` | the bundled Postgres password | required |
 | `SENSORIUM_MCP_TOKEN` | a static bearer token that agents send to `/mcp` | this or the OIDC issuer |
-| `SENSORIUM_MCP_OIDC_ISSUER`, `SENSORIUM_MCP_RESOURCE`, `SENSORIUM_MCP_OIDC_CLIENT_IDS`, `SENSORIUM_MCP_OIDC_ROLE` | accept OAuth access tokens from this issuer for this `/mcp` URL, from these clients, optionally only with this realm role; serves the protected resource metadata | unset |
+| `SENSORIUM_MCP_OIDC_ISSUER`, `SENSORIUM_MCP_RESOURCE`, `SENSORIUM_MCP_OIDC_CLIENT_IDS`, `SENSORIUM_MCP_OIDC_ROLE` | accept OAuth access tokens from this issuer for this `/mcp` URL, from these clients, only with this realm role (required; `*` for any realm user); serves the protected resource metadata | unset |
 | `SENSORIUM_VERSION` | the image tag that compose runs | `latest` |
 | `SENSORIUM_BIND` | the address of the two ports | `127.0.0.1` |
 | `SENSORIUM_INGEST_PORT`, `SENSORIUM_MCP_PORT` | the published ports | `8787`, `8788` |

@@ -108,7 +108,7 @@ sensorium.example.com {
 |------|------|------|
 | `POSTGRES_PASSWORD` | 內建 Postgres 的密碼 | 必填 |
 | `SENSORIUM_MCP_TOKEN` | agent 送到 `/mcp` 的固定 bearer 權杖 | 這個或 OIDC 擇一 |
-| `SENSORIUM_MCP_OIDC_ISSUER`、`SENSORIUM_MCP_RESOURCE`、`SENSORIUM_MCP_OIDC_CLIENT_IDS`、`SENSORIUM_MCP_OIDC_ROLE` | 接受這個 issuer 發給這個 `/mcp` 網址、來自這些 client 的 OAuth access token，可再限定 realm 角色；並提供 protected resource metadata | 不設 |
+| `SENSORIUM_MCP_OIDC_ISSUER`、`SENSORIUM_MCP_RESOURCE`、`SENSORIUM_MCP_OIDC_CLIENT_IDS`、`SENSORIUM_MCP_OIDC_ROLE` | 接受這個 issuer 發給這個 `/mcp` 網址、來自這些 client 的 OAuth access token，且必須帶這個 realm 角色(必填，`*` 表示 realm 內任何人)；並提供 protected resource metadata | 不設 |
 | `SENSORIUM_VERSION` | compose 執行的映像檔 tag | `latest` |
 | `SENSORIUM_BIND` | 兩個 port 監聽的位址 | `127.0.0.1` |
 | `SENSORIUM_INGEST_PORT`、`SENSORIUM_MCP_PORT` | 對外開放的 port | `8787`、`8788` |

@@ -170,12 +170,23 @@ describe("mcpAuthConfigFromEnv", () => {
     expect(() =>
       mcpAuthConfigFromEnv({ SENSORIUM_MCP_OIDC_ISSUER: ISSUER, SENSORIUM_MCP_RESOURCE: RESOURCE }),
     ).toThrow(/CLIENT_IDS/);
-    expect(
-      mcpAuthConfigFromEnv({
-        SENSORIUM_MCP_OIDC_ISSUER: `${ISSUER}/`,
-        SENSORIUM_MCP_RESOURCE: RESOURCE,
-        SENSORIUM_MCP_OIDC_CLIENT_IDS: "a, b",
-      }),
-    ).toEqual({ staticToken: undefined, oidc: { issuer: ISSUER, resource: RESOURCE, clientIds: ["a", "b"], role: undefined } });
+    const base = { SENSORIUM_MCP_OIDC_ISSUER: `${ISSUER}/`, SENSORIUM_MCP_RESOURCE: RESOURCE, SENSORIUM_MCP_OIDC_CLIENT_IDS: "a, b" };
+    expect(mcpAuthConfigFromEnv({ ...base, SENSORIUM_MCP_OIDC_ROLE: "sensorium" })).toEqual({
+      staticToken: undefined,
+      oidc: { issuer: ISSUER, resource: RESOURCE, clientIds: ["a", "b"], role: "sensorium" },
+    });
+  });
+
+  test("an issuer needs a role, and \"*\" accepts any realm user", () => {
+    const base = { SENSORIUM_MCP_OIDC_ISSUER: ISSUER, SENSORIUM_MCP_RESOURCE: RESOURCE, SENSORIUM_MCP_OIDC_CLIENT_IDS: "a" };
+    expect(() => mcpAuthConfigFromEnv(base)).toThrow(/OIDC_ROLE/);
+    expect(() => mcpAuthConfigFromEnv({ ...base, SENSORIUM_MCP_OIDC_ROLE: " " })).toThrow(/OIDC_ROLE/);
+    expect(mcpAuthConfigFromEnv({ ...base, SENSORIUM_MCP_OIDC_ROLE: "*" }).oidc?.role).toBeUndefined();
+  });
+
+  test("the issuer must be an http(s) URL", () => {
+    const rest = { SENSORIUM_MCP_RESOURCE: RESOURCE, SENSORIUM_MCP_OIDC_CLIENT_IDS: "a", SENSORIUM_MCP_OIDC_ROLE: "r" };
+    expect(() => mcpAuthConfigFromEnv({ ...rest, SENSORIUM_MCP_OIDC_ISSUER: "auth.example.org/realms/x" })).toThrow(/http/);
+    expect(() => mcpAuthConfigFromEnv({ ...rest, SENSORIUM_MCP_OIDC_ISSUER: "ftp://auth.example.org" })).toThrow(/http/);
   });
 });

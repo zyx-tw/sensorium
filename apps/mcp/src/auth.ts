@@ -8,7 +8,7 @@ import { createRemoteJWKSet, errors, jwtVerify, type JWTPayload, type JWTVerifyG
  * - OAuth access tokens from an OpenID Connect issuer (SENSORIUM_MCP_OIDC_ISSUER), checked
  *   as a resource server: signature against the issuer's keys, issuer, audience equal to
  *   this server's /mcp URL, an access token (not an ID token), issued to an allowed client,
- *   and optionally carrying a realm role.
+ *   and carrying a realm role unless SENSORIUM_MCP_OIDC_ROLE is "*".
  *
  * The protected resource metadata (RFC 9728) and the 401 challenge that points at it are
  * served only when the issuer is configured.
@@ -51,6 +51,9 @@ export function mcpAuthConfigFromEnv(env: Record<string, string | undefined> = p
     throw new Error("set SENSORIUM_MCP_TOKEN, SENSORIUM_MCP_OIDC_ISSUER, or both");
   }
   if (!issuer) return { staticToken };
+  if (!URL.canParse(issuer) || !/^https?:$/.test(new URL(issuer).protocol)) {
+    throw new Error("SENSORIUM_MCP_OIDC_ISSUER must be an http(s) URL, such as https://auth.example.org/realms/main");
+  }
   const resource = env.SENSORIUM_MCP_RESOURCE?.trim();
   const clientIds = list(env.SENSORIUM_MCP_OIDC_CLIENT_IDS);
   if (!resource || !URL.canParse(resource)) {
@@ -59,9 +62,15 @@ export function mcpAuthConfigFromEnv(env: Record<string, string | undefined> = p
   if (clientIds.length === 0) {
     throw new Error("SENSORIUM_MCP_OIDC_ISSUER needs SENSORIUM_MCP_OIDC_CLIENT_IDS, the MCP client ids allowed");
   }
+  // Without a role, every user of the realm who signs in through an allowed client
+  // reads every project. Make that a choice: "*" accepts any realm user.
+  const role = env.SENSORIUM_MCP_OIDC_ROLE?.trim();
+  if (!role) {
+    throw new Error('SENSORIUM_MCP_OIDC_ISSUER needs SENSORIUM_MCP_OIDC_ROLE, the realm role a caller must hold ("*" for any realm user)');
+  }
   return {
     staticToken,
-    oidc: { issuer, resource, clientIds, role: env.SENSORIUM_MCP_OIDC_ROLE?.trim() || undefined },
+    oidc: { issuer, resource, clientIds, role: role === "*" ? undefined : role },
   };
 }
 
