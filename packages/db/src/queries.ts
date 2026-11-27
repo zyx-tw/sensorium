@@ -846,37 +846,87 @@ export interface MetricCatalogEntry {
 
 /** One row per metric the project reported in the window, with its latest point. */
 export async function listMetricNames(pool: Pool, params: MetricWindowParams): Promise<MetricCatalogEntry[]> {
-  const conditions = ["project = $1", "ts >= $2"];
-  const values: unknown[] = [params.project, params.since];
-  if (params.until) {
-    values.push(params.until);
-    conditions.push(`ts <= $${values.length}`);
-  }
-  const { rows } = await pool.query<{
+  const values = [params.project, params.since, params.until ?? null];
+  type Row = {
     metric_name: string;
     kind: MetricPointRow["kind"];
     point_count: string;
     first_ts: Date;
     last_ts: Date;
     last_value: number;
-  }>(
-    `select distinct on (metric_name)
-       metric_name, kind, ts as last_ts, value as last_value,
-       count(*) over (partition by metric_name) as point_count,
-       min(ts) over (partition by metric_name) as first_ts
-     from metric_points
-     where ${conditions.join(" and ")}
-     order by metric_name asc, ts desc`,
+  };
+  // Per series through metric_samples (series_id, ts desc): the count is an
+  // index-only scan and the latest point is one probe, so the cost follows the
+  // number of series, not the number of points.
+  const { rows: current } = await pool.query<Row>(
+    `with agg as (
+       select s.metric_name, s.kind, x.n, x.first_ts, l.ts as last_ts, l.value as last_value
+         from metric_series s
+         join lateral (
+           select count(*) as n, min(m.ts) as first_ts from metric_samples m
+            where m.series_id = s.id and m.ts >= $2 and m.ts <= coalesce($3::timestamptz, 'infinity')
+         ) x on x.n > 0
+         join lateral (
+           select m.ts, m.value from metric_samples m
+            where m.series_id = s.id and m.ts >= $2 and m.ts <= coalesce($3::timestamptz, 'infinity')
+            order by m.ts desc limit 1
+         ) l on true
+        where s.project = $1
+     )
+     select distinct on (metric_name)
+            metric_name, kind, last_ts, last_value,
+            sum(n) over w as point_count, min(first_ts) over w as first_ts
+       from agg
+     window w as (partition by metric_name)
+      order by metric_name asc, last_ts desc`,
     values,
   );
-  return rows.map((r) => ({
-    metricName: r.metric_name,
-    kind: r.kind,
-    pointCount: Number(r.point_count),
-    firstTs: r.first_ts,
-    lastTs: r.last_ts,
-    lastValue: r.last_value,
-  }));
+  // Points from before 0008 sit in metric_points_legacy until they expire. Read
+  // it only when the window reaches them.
+  const legacyWhere = "project = $1 and ts >= $2 and ts <= coalesce($3::timestamptz, 'infinity')";
+  const { rows: hasLegacy } = await pool.query(
+    `select 1 from metric_points_legacy where ${legacyWhere} limit 1`,
+    values,
+  );
+  const legacy =
+    hasLegacy.length === 0
+      ? []
+      : (
+          await pool.query<Row>(
+            `select distinct on (metric_name)
+               metric_name, kind, ts as last_ts, value as last_value,
+               count(*) over (partition by metric_name) as point_count,
+               min(ts) over (partition by metric_name) as first_ts
+             from metric_points_legacy
+             where ${legacyWhere}
+             order by metric_name asc, ts desc`,
+            values,
+          )
+        ).rows;
+
+  const byName = new Map<string, MetricCatalogEntry>();
+  for (const r of [...legacy, ...current]) {
+    const entry: MetricCatalogEntry = {
+      metricName: r.metric_name,
+      kind: r.kind,
+      pointCount: Number(r.point_count),
+      firstTs: r.first_ts,
+      lastTs: r.last_ts,
+      lastValue: r.last_value,
+    };
+    const seen = byName.get(r.metric_name);
+    if (!seen) {
+      byName.set(r.metric_name, entry);
+      continue;
+    }
+    const newer = entry.lastTs > seen.lastTs ? entry : seen;
+    byName.set(r.metric_name, {
+      ...newer,
+      pointCount: seen.pointCount + entry.pointCount,
+      firstTs: entry.firstTs < seen.firstTs ? entry.firstTs : seen.firstTs,
+    });
+  }
+  return [...byName.values()].sort((a, b) => (a.metricName < b.metricName ? -1 : a.metricName > b.metricName ? 1 : 0));
 }
 
 export interface QueryMetricsParams extends MetricWindowParams {
