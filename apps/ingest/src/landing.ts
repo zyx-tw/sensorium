@@ -4,7 +4,7 @@ import path from "node:path";
  * The page sensorium.zyx.tw answers / with: what sensorium is, what it does,
  * how to deploy, use and configure it (the README's sections, shorter), in the
  * frame every zyx.tw site shares, as ui.zyx.tw's DESIGN.md sets it: the zyx
- * mark top left, mirrored on hover; GitHub top right; Privacy and Terms bottom
+ * mark top left, mirrored on hover, with "/ SENSORIUM" beside it; GitHub top right; Privacy and Terms bottom
  * left; the copyright bottom right, each 12px (--gutter) in from the viewport's
  * corner with its tip (TIPS). One monospace face (Maple Mono NF CN, the same
  * subset as ui.zyx.tw, static/README.md), the four type sizes, soft grayscale
@@ -256,6 +256,7 @@ a:focus-visible{outline:2px solid var(--ring)}
 .link::after{content:"";position:absolute;left:-8px;right:-8px;top:50%;height:24px;transform:translateY(-50%)}
 .link:hover{color:var(--foreground)}
 .mark{display:block}
+.tl:has(.trail){gap:8px}.trail{display:flex;gap:8px;text-transform:uppercase}.trail>span:first-child{color:var(--muted-foreground)}
 .mark svg{display:block;height:20px;width:auto;fill:currentColor}
 .mark:hover svg{transform:scaleX(-1)}
 @media (prefers-reduced-motion:no-preference){.mark svg{transition:transform 200ms ease-out}}
@@ -298,7 +299,7 @@ function html(year: number): string {
 <style>${STYLE}</style>
 </head>
 <body>
-<header><div class="fade top"></div><div class="corner tl"><span class="tipped"><a class="mark" href="https://www.zyx.tw" aria-label="zyx.tw"><svg viewBox="0 0 4096 3615" aria-hidden="true" focusable="false"><path d="${MARK}"/></svg></a>${tip(TIPS.mark)}</span></div>
+<header><div class="fade top"></div><div class="corner tl"><span class="tipped"><a class="mark" href="https://www.zyx.tw" aria-label="zyx.tw"><svg viewBox="0 0 4096 3615" aria-hidden="true" focusable="false"><path d="${MARK}"/></svg></a>${tip(TIPS.mark)}</span><nav class="trail" aria-label="Breadcrumb"><span aria-hidden="true">/</span><span aria-current="page">${PAGE.title}</span></nav></div>
 <nav class="corner tr" aria-label="Main"><span class="tipped"><a class="link" href="${REPO}"${target(REPO)}>GitHub</a>${tip(TIPS.github)}</span></nav></header>
 <main>
 <h1>${PAGE.title}</h1>
