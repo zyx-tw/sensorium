@@ -105,7 +105,7 @@ Set these in `.env`. [.env.example](.env.example) documents each one.
 | `SENSORIUM_INGEST_PORT`, `SENSORIUM_MCP_PORT` | the published ports | `8787`, `8788` |
 | `SENSORIUM_RETENTION_METRIC_DAYS` | days of metrics to keep | `14` |
 | `SENSORIUM_RETENTION_SPAN_DAYS`, `SENSORIUM_RETENTION_LOG_DAYS` | days of spans and logs to keep | `30` |
-| `SENSORIUM_RETENTION_AHEAD_DAYS` | days of metric partitions to create ahead | `7` |
+| `SENSORIUM_RETENTION_AHEAD_DAYS` | days of partitions to create ahead | `7` |
 | `DATABASE_URL`, `PORT`, `MCP_PORT` | a run from source only | |
 
 Size the metric window against real traffic. One busy Proxmox host writes about 2.4 GB of metrics a day, so 14 days take about 33 GB of disk.
@@ -128,7 +128,7 @@ flowchart LR
 
 - Registration binds each ingest token to one project. sensorium records the `service.namespace` that a producer claims, but never uses it for scoping. The token alone decides the project.
 - The MCP endpoint has one shared token for trusted readers, and reads cross projects.
-- `metric_points` has one partition per UTC day, so expiring metrics drops whole tables and frees the space at once.
+- `metric_points`, `spans` and `logs` have one partition per UTC day, so expiry drops whole tables and frees the space at once.
 
 ## Limits
 

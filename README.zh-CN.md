@@ -107,7 +107,7 @@ sensorium.example.com {
 | `SENSORIUM_INGEST_PORT`、`SENSORIUM_MCP_PORT` | 对外开放的端口 | `8787`、`8788` |
 | `SENSORIUM_RETENTION_METRIC_DAYS` | metric 保留天数 | `14` |
 | `SENSORIUM_RETENTION_SPAN_DAYS`、`SENSORIUM_RETENTION_LOG_DAYS` | span 和日志保留天数 | `30` |
-| `SENSORIUM_RETENTION_AHEAD_DAYS` | 预先创建几天的 metric 分区 | `7` |
+| `SENSORIUM_RETENTION_AHEAD_DAYS` | 预先创建几天的分区 | `7` |
 | `DATABASE_URL`、`PORT`、`MCP_PORT` | 只有从源码运行时需要 | |
 
 按实际流量估算 metric 的保留天数。一台繁忙的 Proxmox 主机每天约写 2.4 GB 的 metric，14 天约占 33 GB。
@@ -130,7 +130,7 @@ flowchart LR
 
 - 注册时，每个写入令牌绑定一个项目。sensorium 会记下 producer 声称的 `service.namespace`，但不会用它来划分项目，只由令牌决定。
 - MCP 端点用一组共享令牌给受信任的读取者，可以跨项目读取。
-- `metric_points` 每个 UTC 日一个分区，所以清理 metric 时直接删除整张表，空间立刻释放。
+- `metric_points`、`spans`、`logs` 每个 UTC 日一个分区，清理时直接删除整张表，空间立刻释放。
 
 ## 限制
 

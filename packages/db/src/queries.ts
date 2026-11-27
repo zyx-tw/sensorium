@@ -128,7 +128,11 @@ export async function insertLogs(pool: Pool, rows: LogRow[]): Promise<number> {
   return rows.length;
 }
 
-/** Upserts on (project, trace_id, span_id) so retried exports don't duplicate rows. */
+/**
+ * Upserts on (project, trace_id, span_id, start_ts) so retried exports don't duplicate
+ * rows. start_ts is in the key because spans are partitioned by it (migration 0006);
+ * a retried export carries the same start time.
+ */
 export async function insertSpans(pool: Pool, rows: SpanRow[]): Promise<number> {
   if (rows.length === 0) return 0;
   const columns = [
@@ -147,15 +151,16 @@ export async function insertSpans(pool: Pool, rows: SpanRow[]): Promise<number> 
     "attributes",
   ];
   // One statement cannot upsert the same key twice, so keep the last copy of each span.
-  const unique = [...new Map(rows.map((row) => [`${row.traceId}/${row.spanId}`, row])).values()];
+  const unique = [
+    ...new Map(rows.map((row) => [`${row.traceId}/${row.spanId}/${row.startTs.getTime()}`, row])).values(),
+  ];
   await insertChunked(
     pool,
     (tuples) => `insert into spans (${columns.join(", ")}) values ${tuples}
-     on conflict (project, trace_id, span_id) do update set
+     on conflict (project, trace_id, span_id, start_ts) do update set
        parent_span_id = excluded.parent_span_id,
        name = excluded.name,
        kind = excluded.kind,
-       start_ts = excluded.start_ts,
        end_ts = excluded.end_ts,
        duration_ms = excluded.duration_ms,
        status_code = excluded.status_code,

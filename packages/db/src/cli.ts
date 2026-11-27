@@ -39,20 +39,12 @@ async function main() {
       console.log(
         `retention: keep metrics ${config.metricDays}d, spans ${config.spanDays}d, logs ${config.logDays}d`,
       );
-      console.log(
-        `partitions created: ${report.partitionsCreated.join(", ") || "(none)"}`,
-      );
-      console.log(
-        `partitions dropped: ${report.partitionsDropped.join(", ") || "(none)"}`,
-      );
-      if (report.defaultRowsRescued > 0) {
+      for (const [table, r] of Object.entries(report)) {
         console.log(
-          `rescued from default partition: ${report.defaultRowsRescued} rows`,
+          `${table}: created ${r.partitionsCreated.length}, dropped ${r.partitionsDropped.join(", ") || "(none)"}` +
+            (r.defaultRowsRescued > 0 ? `, rescued ${r.defaultRowsRescued} rows from the default partition` : ""),
         );
       }
-      console.log(
-        `spans deleted: ${report.spansDeleted}, logs deleted: ${report.logsDeleted}`,
-      );
     } else {
       console.error(
         "usage: cli.ts <migrate|register-project|retention> [args]",
