@@ -208,9 +208,10 @@ export async function dropExpiredPartitions(
  *
  * Reachable when a day arrived with no partition pre-created: the timer was
  * down for longer than aheadDays, or a producer sent a timestamp outside the
- * window (a skewed clock). Each remaining day gets one partition, and rows past
- * retention are deleted instead, so a bad clock costs at most one table per
- * distinct day it sent. The detach is what makes
+ * window (a skewed clock). Each day up to aheadDays from now gets one
+ * partition, and rows past retention are deleted instead. Rows further ahead (a
+ * clock in 2100) stay in default: a partition for them would outlive every
+ * retention run. The detach is what makes
  * the re-insert legal: while attached, a row cannot move out of default into
  * an overlapping partition.
  */
@@ -219,6 +220,7 @@ export async function drainDefaultPartition(
   table: PartitionedTable = "metric_samples",
   keepDays?: number,
   now = new Date(),
+  aheadDays = DEFAULT_RETENTION.aheadDays,
 ): Promise<number> {
   const defaultPartition = `${partitionPrefix(table)}_default`;
   const column = partitionColumn(table);
@@ -226,14 +228,20 @@ export async function drainDefaultPartition(
   if (keepDays !== undefined) {
     await pool.query(`delete from ${defaultPartition} where ${column} < $1`, [utcDay(now, -keepDays).toISOString()]);
   }
+  const horizon = utcDay(now, aheadDays + 1).toISOString();
   const { rows } = await pool.query<{ n: string }>(
-    `select count(*) as n from ${defaultPartition}`,
+    `select count(*) as n from ${defaultPartition} where ${column} < $1`,
+    [horizon],
   );
   const pending = Number(rows[0]?.n ?? 0);
   if (pending === 0) return 0;
 
-  const { rows: dayRows } = await pool.query<{ day: Date }>(
-    `select distinct (${column} at time zone 'UTC')::date as day from ${defaultPartition} order by day`,
+  // The day as text: a date column would come back as local midnight in the
+  // process timezone, a day off when that is not UTC.
+  const { rows: dayRows } = await pool.query<{ day: string }>(
+    `select distinct to_char(${column} at time zone 'UTC', 'YYYY-MM-DD') as day
+       from ${defaultPartition} where ${column} < $1 order by day`,
+    [horizon],
   );
 
   const client = await pool.connect();
@@ -243,7 +251,7 @@ export async function drainDefaultPartition(
       `alter table ${table} detach partition ${defaultPartition}`,
     );
     for (const { day } of dayRows) {
-      const utc = utcDay(new Date(day));
+      const utc = new Date(`${day}T00:00:00Z`);
       const { from, to } = partitionBounds(utc);
       await client.query(
         `create table if not exists ${partitionName(utc, table)}
@@ -251,8 +259,8 @@ export async function drainDefaultPartition(
       );
     }
     // The detached default keeps the parent's column order, so select * lines up.
-    await client.query(`insert into ${table} select * from ${defaultPartition}`);
-    await client.query(`truncate ${defaultPartition}`);
+    await client.query(`insert into ${table} select * from ${defaultPartition} where ${column} < $1`, [horizon]);
+    await client.query(`delete from ${defaultPartition} where ${column} < $1`, [horizon]);
     await client.query(
       `alter table ${table} attach partition ${defaultPartition} default`,
     );
@@ -300,7 +308,7 @@ export async function runRetention(
   for (const table of PARTITIONED_TABLES) {
     // Order matters: rescue before dropping, so a rescued row from an expired
     // day is dropped in the same run instead of lingering a day longer.
-    const defaultRowsRescued = await drainDefaultPartition(pool, table, keepDaysFor(table, config), now);
+    const defaultRowsRescued = await drainDefaultPartition(pool, table, keepDaysFor(table, config), now, config.aheadDays);
     const partitionsCreated = await ensurePartitions(pool, config.aheadDays, now, table);
     const partitionsDropped = await dropExpiredPartitions(
       pool,

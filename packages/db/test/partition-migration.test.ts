@@ -129,11 +129,37 @@ describe.skipIf(!DATABASE_URL)("0006 partitions spans and logs (integration, req
     const report = await runRetention(pool, { ...DEFAULT_RETENTION, spanDays: 30, logDays: 30 }, new Date(now));
     expect(report.tables.spans!.partitionsDropped.length).toBeGreaterThan(0);
     const { rows } = await pool.query(
-      "select count(*)::int n, (select count(*)::int from spans_default) d, (select count(*)::int from spans_21000101) f from spans",
+      "select count(*)::int n, (select count(*)::int from spans_default) d, to_regclass('spans_21000101') is null no_2100 from spans",
     );
-    // The 40-day-old span is gone; the 2100 one moved out of default into its own day.
-    expect(rows[0]).toEqual({ n: 3, d: 0, f: 1 });
-    expect(report.tables.spans!.defaultRowsRescued).toBe(1);
+    // The 40-day-old span is gone. The 2100 one stays in default: its own
+    // partition would never expire.
+    expect(rows[0]).toEqual({ n: 3, d: 1, no_2100: true });
+    expect(report.tables.spans!.defaultRowsRescued).toBe(0);
     expect(report.tables.logs!.partitionsCreated).toEqual([]);
+  });
+
+  test("a rescued day is named by its UTC date, whatever the process timezone", async () => {
+    // 62 days back is before the partitions 0006 made, so the span lands in default.
+    const ts = new Date(now - 62 * day);
+    await pool.query(
+      `insert into spans (project, trace_id, span_id, name, kind, start_ts, end_ts, duration_ms)
+       values ('p', 'old', 'o', 'n', 'server', $1, $1, 1)`,
+      [ts.toISOString()],
+    );
+    // Bun reads TZ on each change. Not a build input, so turbo need not hash it.
+    const env = process.env;
+    const tz = env["TZ"];
+    env["TZ"] = "Asia/Taipei";
+    try {
+      const report = await runRetention(pool, { ...DEFAULT_RETENTION, spanDays: 90, logDays: 90 }, new Date(now));
+      expect(report.tables.spans!.defaultRowsRescued).toBe(1);
+    } finally {
+      // Assigning undefined would store the string "undefined".
+      if (tz === undefined) delete env["TZ"];
+      else env["TZ"] = tz;
+    }
+    const name = `spans_${ts.toISOString().slice(0, 10).replaceAll("-", "")}`;
+    const { rows } = await pool.query(`select count(*)::int n from ${name} where trace_id = 'old'`);
+    expect(rows[0].n).toBe(1);
   });
 });

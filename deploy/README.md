@@ -79,6 +79,13 @@ The file is about a tenth of the table. The script stops at the first error,
 refuses to truncate when the row count in the file differs from the table, and
 keeps the file until you delete it.
 
+0006 makes day partitions for the last 60 days. With `SENSORIUM_RETENTION_SPAN_DAYS`
+or `SENSORIUM_RETENTION_LOG_DAYS` above 60, older rows land in the default
+partition, and the first retention run moves them into their own days while it
+holds a lock on the table. Run retention by hand once, at a quiet time, right
+after 0006. Before migrating, check `\dp spans logs`: 0006 restores table
+grants but not column grants or `WITH GRANT OPTION`.
+
 ## PostgreSQL version
 
 Compose runs `postgres:16-alpine` by default, so an existing volume keeps working. CI tests both 16 and 18. A new instance can start on 18 with `SENSORIUM_POSTGRES_IMAGE=postgres:18-alpine` in `.env`.
