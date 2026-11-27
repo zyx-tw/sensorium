@@ -22,8 +22,8 @@
 --
 -- The copy runs inside this migration, so it needs free disk about the size
 -- of the two tables. For a table too large for that, see deploy/README.md
--- ("Large spans tables"): empty it into a compressed file first, run this
--- migration, then load the file back.
+-- ("Large spans tables"): deploy/spans-0006.sh empties it into a compressed
+-- file first, this migration runs, then the script loads the file back.
 
 alter table spans rename to spans_legacy;
 alter index spans_pkey rename to spans_legacy_pkey;
@@ -67,23 +67,29 @@ create table logs (
 alter sequence logs_id_seq owned by logs.id;
 select setval('logs_id_seq', coalesce((select max(id) from logs_legacy), 0) + 1, false);
 
--- Day partitions from the oldest row (or 31 days back, whichever is earlier,
--- so a table loaded back after this migration finds its days) to a week ahead.
--- Bounds are UTC midnights, matching partitionBounds() in src/retention.ts.
+-- Day partitions for the window that matters: from the oldest row (but no
+-- further back than 60 days) to a week ahead. A row outside it, such as a
+-- producer clock set to 2100, lands in the default partition, and the next
+-- retention sweep moves it into a partition of its own day (or deletes it
+-- when expired), so one bad timestamp cannot ask for thousands of tables.
+-- The lower edge is at least 31 days back, so a table loaded back after this
+-- migration (deploy/README.md) finds its days. Bounds are UTC midnights,
+-- matching partitionBounds() in src/retention.ts. At the 60-day maximum the
+-- whole migration holds about 1,400 locks, well under the 6,400 that
+-- PostgreSQL's defaults allow (max_locks_per_transaction x max_connections).
 do $$
 declare
   t record;
+  today date := (now() at time zone 'UTC')::date;
   day date;
   last_day date;
 begin
   for t in
     select * from (values ('spans', 'spans_legacy', 'start_ts'), ('logs', 'logs_legacy', 'ts')) v(parent, legacy, col)
   loop
-    execute format('select least(min(%I at time zone ''UTC'')::date, (now() at time zone ''UTC'')::date - 31) from %I', t.col, t.legacy)
-      into day;
-    day := coalesce(day, (now() at time zone 'UTC')::date - 31);
-    execute format('select max(%I at time zone ''UTC'')::date from %I', t.col, t.legacy) into last_day;
-    last_day := greatest(coalesce(last_day, day), (now() at time zone 'UTC')::date) + 7;
+    execute format('select min(%I at time zone ''UTC'')::date from %I', t.col, t.legacy) into day;
+    day := least(greatest(coalesce(day, today), today - 60), today - 31);
+    last_day := today + 7;
     while day <= last_day loop
       execute format(
         'create table %I partition of %I for values from (%L) to (%L)',
@@ -123,6 +129,11 @@ begin
     execute format('grant %s on %I to %s', g.privilege_type,
                    replace(g.table_name, '_legacy', ''),
                    case when g.grantee = 'PUBLIC' then 'public' else quote_ident(g.grantee) end);
+    -- logs.id now comes from a sequence, which needs its own privilege to insert.
+    if g.table_name = 'logs_legacy' and g.privilege_type = 'INSERT' then
+      execute format('grant usage on sequence logs_id_seq to %s',
+                     case when g.grantee = 'PUBLIC' then 'public' else quote_ident(g.grantee) end);
+    end if;
   end loop;
 end $$;
 

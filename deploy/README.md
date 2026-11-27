@@ -59,35 +59,19 @@ sudo -u postgres psql -d sensorium -Atc "select max(ts) from metric_points"
 
 Migration 0006 copies `spans` and `logs` into partitioned tables inside one
 transaction, so it needs free disk about the size of both. When `spans` is too
-large for that, empty it into a compressed file first, let the migration run on
-the empty table, then load the file back one day at a time. Ingest is down only
-for the dump. Run from the compose directory; `psql` below is
-`docker compose exec -T postgres psql -U sensorium -d sensorium`.
+large for that, `deploy/spans-0006.sh` empties it into a compressed file first,
+the migration then runs on the empty table, and the script loads the file back
+one day at a time. Ingest is down only for the dump. From the compose
+directory:
 
-1. Stop the writers: `docker compose stop ingest mcp retention`.
-2. Dump and count (binary COPY keeps the column order 0006 uses):
+```sh
+docker compose stop ingest mcp retention
+deploy/spans-0006.sh dump spans-pre-0006.zst   # checks the count read back from the file before it truncates
+# set SENSORIUM_VERSION in .env to the image with 0006
+docker compose up -d                           # 0006 runs in seconds on the empty table
+deploy/spans-0006.sh load spans-pre-0006.zst   # per day, skipping rows past retention
+```
 
-   ```sh
-   psql -Atc "select count(*) from spans"
-   psql -c "\copy spans to stdout (format binary)" | zstd -3 -T0 > spans-pre-0006.bin.zst
-   ```
-
-3. Empty the table, which returns its disk at once: `psql -c "truncate spans"`.
-4. Deploy the new image (`SENSORIUM_VERSION` in `.env`, then
-   `docker compose up -d`). 0006 now runs in seconds and creates a partition
-   for every day from 31 days back.
-5. Load the file back, one day per pass, through a staging table, so a span
-   that arrived again after the restart cannot fail the load:
-
-   ```sh
-   psql -c "create unlogged table spans_restore (like spans)"
-   for d in $(seq 31 -1 0); do
-     from=$(date -u -d "$d days ago" +%F); to=$(date -u -d "$((d - 1)) days ago" +%F)
-     zstd -dc spans-pre-0006.bin.zst | psql -c "\copy spans_restore from stdin (format binary) where start_ts >= '$from' and start_ts < '$to'"
-     psql -c "insert into spans select * from spans_restore on conflict do nothing" -c "truncate spans_restore"
-   done
-   psql -c "drop table spans_restore" -Atc "select count(*) from spans"
-   ```
-
-6. Compare the counts, then delete the file. The loop loads the last 31 days;
-   if `SENSORIUM_RETENTION_SPAN_DAYS` is larger, start `seq` at that number.
+The file is about a tenth of the table. The script stops at the first error,
+refuses to truncate when the row count in the file differs from the table, and
+keeps the file until you delete it.

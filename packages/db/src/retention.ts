@@ -183,17 +183,26 @@ export async function dropExpiredPartitions(
 /**
  * Moves anything that landed in the default partition into a real one.
  *
- * Only reachable if a day arrived with no partition pre-created, which means
- * the timer has been down for longer than aheadDays. The detach is what makes
+ * Reachable when a day arrived with no partition pre-created: the timer was
+ * down for longer than aheadDays, or a producer sent a timestamp outside the
+ * window (a skewed clock). Each remaining day gets one partition, and rows past
+ * retention are deleted instead, so a bad clock costs at most one table per
+ * distinct day it sent. The detach is what makes
  * the re-insert legal: while attached, a row cannot move out of default into
  * an overlapping partition.
  */
 export async function drainDefaultPartition(
   pool: Pool,
   table: PartitionedTable = "metric_points",
+  keepDays?: number,
+  now = new Date(),
 ): Promise<number> {
   const defaultPartition = `${table}_default`;
   const column = table === "spans" ? "start_ts" : "ts";
+  // Rows already past retention are deleted rather than given a partition of their own.
+  if (keepDays !== undefined) {
+    await pool.query(`delete from ${defaultPartition} where ${column} < $1`, [utcDay(now, -keepDays).toISOString()]);
+  }
   const { rows } = await pool.query<{ n: string }>(
     `select count(*) as n from ${defaultPartition}`,
   );
@@ -257,7 +266,7 @@ export async function runRetention(
   for (const table of PARTITIONED_TABLES) {
     // Order matters: rescue before dropping, so a rescued row from an expired
     // day is dropped in the same run instead of lingering a day longer.
-    const defaultRowsRescued = await drainDefaultPartition(pool, table);
+    const defaultRowsRescued = await drainDefaultPartition(pool, table, keepDaysFor(table, config), now);
     const partitionsCreated = await ensurePartitions(pool, config.aheadDays, now, table);
     const partitionsDropped = await dropExpiredPartitions(pool, keepDaysFor(table, config), now, table);
     report[table] = { partitionsCreated, partitionsDropped, defaultRowsRescued };

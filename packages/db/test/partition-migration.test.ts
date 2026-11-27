@@ -26,6 +26,13 @@ describe.skipIf(!DATABASE_URL)("0006 partitions spans and logs (integration, req
     await createProject(pool, "p", "token-p");
     await pool.query(`do $$ begin create role sens_mig_ro; exception when duplicate_object then null; end $$`);
     await pool.query("grant select on spans, logs to sens_mig_ro");
+    await pool.query(`do $$ begin create role sens_mig_rw; exception when duplicate_object then null; end $$`);
+    await pool.query("grant select, insert on logs to sens_mig_rw");
+    // A producer clock in 2100 must not make the migration build thousands of partitions.
+    await pool.query(
+      `insert into spans (project, trace_id, span_id, name, kind, start_ts, end_ts, duration_ms)
+       values ('p', 'future', 'f', 'n', 'server', '2100-01-01', '2100-01-01', 1)`,
+    );
     // 3 spans over 3 days (one 40 days old), 2 logs.
     for (const [i, ago] of [0, 1, 40].entries()) {
       const t = new Date(now - ago * day).toISOString();
@@ -43,6 +50,7 @@ describe.skipIf(!DATABASE_URL)("0006 partitions spans and logs (integration, req
     await pool.end();
     await admin.query(`drop database ${dbName}`);
     await admin.query("drop role if exists sens_mig_ro");
+    await admin.query("drop role if exists sens_mig_rw");
     await admin.end();
   });
 
@@ -53,7 +61,26 @@ describe.skipIf(!DATABASE_URL)("0006 partitions spans and logs (integration, req
               (select relkind from pg_class where relname = 'logs') logs_kind,
               (select count(*)::int from spans_default) in_default`,
     );
-    expect(rows[0]).toEqual({ spans: 3, logs: 2, spans_kind: "p", logs_kind: "p", in_default: 0 });
+    expect(rows[0]).toEqual({ spans: 4, logs: 2, spans_kind: "p", logs_kind: "p", in_default: 1 });
+  });
+
+  test("partitions cover a bounded window, not the far-future row's day", async () => {
+    const { rows } = await pool.query(
+      `select count(*)::int n from pg_inherits where inhparent = 'spans'::regclass`,
+    );
+    // 60 days back at most, a week ahead, plus the default partition.
+    expect(rows[0].n).toBeLessThanOrEqual(69);
+  });
+
+  test("a role that could insert logs still can (the new id sequence is granted)", async () => {
+    const client = await pool.connect();
+    try {
+      await client.query("set role sens_mig_rw");
+      await client.query(`insert into logs (project, ts, body) values ('p', now(), 'as rw')`);
+    } finally {
+      await client.query("reset role");
+      client.release();
+    }
   });
 
   test("the read-only role can still read both tables", async () => {
@@ -96,8 +123,12 @@ describe.skipIf(!DATABASE_URL)("0006 partitions spans and logs (integration, req
   test("retention drops expired days for spans and logs by partition", async () => {
     const report = await runRetention(pool, { ...DEFAULT_RETENTION, spanDays: 30, logDays: 30 }, new Date(now));
     expect(report.spans.partitionsDropped.length).toBeGreaterThan(0);
-    const { rows } = await pool.query("select count(*)::int n from spans");
-    expect(rows[0].n).toBe(2);
+    const { rows } = await pool.query(
+      "select count(*)::int n, (select count(*)::int from spans_default) d, (select count(*)::int from spans_21000101) f from spans",
+    );
+    // The 40-day-old span is gone; the 2100 one moved out of default into its own day.
+    expect(rows[0]).toEqual({ n: 3, d: 0, f: 1 });
+    expect(report.spans.defaultRowsRescued).toBe(1);
     expect(report.logs.partitionsCreated).toEqual([]);
   });
 });
