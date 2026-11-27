@@ -74,7 +74,7 @@ sensorium.example.com {
    OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer%20<ingest token>
    ```
 
-   sensorium 不收 gzip 也不收 gRPC。只會送這兩種的 exporter，前面要放一個 OpenTelemetry Collector，參考 [collector/](collector/)，並把 otlphttp exporter 設成 `compression: none`。
+   sensorium 收 OTLP/HTTP，未壓縮或 gzip 都可以，但不收 gRPC。只會送 gRPC 的 exporter，前面要放一個 OpenTelemetry Collector，參考 [collector/](collector/)。
 
 3. 連接 agent：
 
@@ -134,7 +134,9 @@ flowchart LR
 
 ## 限制
 
-- 只接收未壓縮、`application/json` 或 `application/x-protobuf` 的 OTLP/HTTP。其他類型回 415，gzip 回 400。
+- 接收 `application/json` 或 `application/x-protobuf` 的 OTLP/HTTP，未壓縮或 `Content-Encoding: gzip`。其他類型回 415。
+- 資料庫出錯回 503 加 `Retry-After`；同時超過 `SENSORIUM_INGEST_MAX_IN_FLIGHT`（32）筆回 429，exporter 會重送。只有永遠存不進去的內容才回 400。
+- 內容上限 `SENSORIUM_INGEST_MAX_BODY_BYTES`（64 MiB），gzip 解壓後也算；超過回 413。
 - histogram 資料點只存加總 `sum`，不存分桶，看得出變化，算不了百分位數。
 - 接收端還沒有速率限制，也沒有內容大小上限。
 - `search` 用的是 `ILIKE`，不是全文檢索。

@@ -72,7 +72,7 @@ Without Docker, [deploy/](deploy/) has systemd units for a checkout with Bun and
    OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer%20<ingest token>
    ```
 
-   sensorium takes neither gzip nor gRPC. For an exporter that sends only those, put an OpenTelemetry Collector in front, as in [collector/](collector/), with `compression: none` on its otlphttp exporter.
+   sensorium takes OTLP/HTTP, plain or gzip, but not gRPC. For an exporter that sends only gRPC, put an OpenTelemetry Collector in front, as in [collector/](collector/).
 
 3. Connect an agent:
 
@@ -132,9 +132,10 @@ flowchart LR
 
 ## Limits
 
-- Ingest accepts uncompressed OTLP/HTTP with `application/json` or `application/x-protobuf`. Other types get a 415, and gzip bodies get a 400.
+- Ingest accepts OTLP/HTTP with `application/json` or `application/x-protobuf`, plain or `Content-Encoding: gzip`. Other types get a 415.
+- A database error answers 503 with `Retry-After`, and more than `SENSORIUM_INGEST_MAX_IN_FLIGHT` (32) exports at once answer 429, so exporters retry. Only a body that can never be stored answers 400.
 - Histogram points store the aggregate `sum` as the value, not the buckets. They show movement, not percentiles.
-- Ingest has no rate limits or payload size caps yet.
+- A body is capped at `SENSORIUM_INGEST_MAX_BODY_BYTES` (64 MiB), also after gzip decompression; larger bodies get a 413.
 - `search` uses `ILIKE`, not full-text search.
 - `top_sources` reads its fields from the jsonb attributes, with no dedicated columns or indexes yet.
 - sensorium sets `http_status_code` on inbound spans only, so the status of a callee never changes `error_summary` or `top_sources`.
@@ -151,7 +152,7 @@ Facts for coding agents and LLM tools. The rules for changing the code are in [A
 - **Verify**: `docker compose run --rm ingest register-project test`, send one OTLP log, then call `query_logs` for `test`
 - **Config**: `POSTGRES_PASSWORD`, `SENSORIUM_MCP_TOKEN`, `SENSORIUM_VERSION`, `SENSORIUM_BIND`, `SENSORIUM_INGEST_PORT`, `SENSORIUM_MCP_PORT`, `SENSORIUM_RETENTION_*`, `DATABASE_URL`
 - **Secrets**: `SENSORIUM_MCP_TOKEN` and the database password in `.env`. Registration prints each ingest token once.
-- **Limits**: no gzip, no gRPC, no rate limits. Reads cross projects for every MCP token holder.
+- **Limits**: no gRPC, no per-project rate limits. Reads cross projects for every MCP token holder.
 
 ## Development
 
