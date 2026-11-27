@@ -5,6 +5,7 @@ import {
   type OtlpKeyValue,
   type OtlpLogsPayload,
   type OtlpMetricsPayload,
+  type OtlpNumberDataPoint,
   type OtlpResource,
   type OtlpTracesPayload,
 } from "./otlp-json.js";
@@ -14,6 +15,38 @@ import { isInboundSpan, type LogRow, type MetricPointRow, type SpanRow } from ".
 export function nanosToDate(nanos: string | number): Date {
   const n = typeof nanos === "number" ? BigInt(Math.trunc(nanos)) : BigInt(nanos);
   return new Date(Number(n / 1_000_000n));
+}
+
+/**
+ * The first timestamp that is set. OTLP uses 0 for "unknown", and protobuf omits a zero
+ * field, so both 0 and a missing value fall through to the next candidate; with none set,
+ * the receive time is used so the row still lands inside retention.
+ */
+export function firstTime(candidates: Array<string | number | undefined>, receivedAt: Date): Date {
+  for (const nanos of candidates) {
+    if (nanos === undefined || nanos === null || nanos === "" || nanos === 0 || nanos === "0") continue;
+    try {
+      return nanosToDate(nanos);
+    } catch {
+      continue;
+    }
+  }
+  return receivedAt;
+}
+
+/** SeverityNumber ranges (logs.proto): 1-4 TRACE, 5-8 DEBUG, 9-12 INFO, 13-16 WARN, 17-20 ERROR, 21-24 FATAL. */
+const SEVERITY_NAMES = ["TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL"] as const;
+
+/**
+ * The stored severity. severityNumber is OTLP's normalized level, so when it is set its
+ * short name wins (a "warning" or "Error" text then reads WARN or ERROR); otherwise the
+ * producer's text is kept as sent.
+ */
+export function severityOf(severityNumber: number | undefined, severityText: string | undefined): string | null {
+  if (severityNumber !== undefined && severityNumber >= 1 && severityNumber <= 24) {
+    return SEVERITY_NAMES[Math.floor((severityNumber - 1) / 4)]!;
+  }
+  return severityText ? severityText : null;
 }
 
 function anyValueToJs(value: OtlpAnyValue | undefined): unknown {
@@ -66,7 +99,7 @@ export function httpStatusCodeFromAttributes(attributes: Record<string, unknown>
  * `project` is caller-supplied (resolved from the ingest bearer token), NOT
  * read from resource attributes — token binding wins over client claims.
  */
-export function mapOtlpLogsToRows(project: string, payload: OtlpLogsPayload): LogRow[] {
+export function mapOtlpLogsToRows(project: string, payload: OtlpLogsPayload, receivedAt = new Date()): LogRow[] {
   const rows: LogRow[] = [];
   for (const rl of payload.resourceLogs ?? []) {
     const resource = resourceToObject(rl.resource);
@@ -74,8 +107,8 @@ export function mapOtlpLogsToRows(project: string, payload: OtlpLogsPayload): Lo
       for (const rec of sl.logRecords ?? []) {
         rows.push({
           project,
-          ts: nanosToDate(rec.timeUnixNano),
-          severity: rec.severityText ?? null,
+          ts: firstTime([rec.timeUnixNano, rec.observedTimeUnixNano], receivedAt),
+          severity: severityOf(rec.severityNumber, rec.severityText),
           body:
             rec.body?.stringValue ??
             (rec.body !== undefined ? JSON.stringify(anyValueToJs(rec.body)) : null),
@@ -91,14 +124,14 @@ export function mapOtlpLogsToRows(project: string, payload: OtlpLogsPayload): Lo
 }
 
 /** Maps an OTLP/JSON ExportTraceServiceRequest to our span rows. */
-export function mapOtlpTracesToRows(project: string, payload: OtlpTracesPayload): SpanRow[] {
+export function mapOtlpTracesToRows(project: string, payload: OtlpTracesPayload, receivedAt = new Date()): SpanRow[] {
   const rows: SpanRow[] = [];
   for (const rs of payload.resourceSpans ?? []) {
     const resource = resourceToObject(rs.resource);
     for (const ss of rs.scopeSpans ?? []) {
       for (const span of ss.spans ?? []) {
-        const startTs = nanosToDate(span.startTimeUnixNano);
-        const endTs = nanosToDate(span.endTimeUnixNano);
+        const startTs = firstTime([span.startTimeUnixNano, span.endTimeUnixNano], receivedAt);
+        const endTs = firstTime([span.endTimeUnixNano], startTs);
         const attributes = keyValuesToObject(span.attributes);
         const kind = spanKindFromProto(span.kind);
         rows.push({
@@ -124,37 +157,48 @@ export function mapOtlpTracesToRows(project: string, payload: OtlpTracesPayload)
 
 /**
  * Maps an OTLP/JSON ExportMetricsServiceRequest to our metric point rows.
- * v0 simplification: histogram points are stored as their `sum` (one row,
- * not per-bucket) — good enough for "is this metric moving" queries, not for
- * percentile math. Revisit if an MCP tool ever needs bucket-level detail.
+ *
+ * Gauges and sums are one row per point. Histograms, exponential histograms and
+ * summaries keep their sum under the metric's own name (kind "histogram", as before)
+ * and add `<name>.count`, plus `<name>.min` and `<name>.max` when the point has them;
+ * a summary also adds one `<name>.quantile` row per quantile, with the quantile in the
+ * row's attributes. Buckets are not stored.
  */
-export function mapOtlpMetricsToRows(project: string, payload: OtlpMetricsPayload): MetricPointRow[] {
+export function mapOtlpMetricsToRows(project: string, payload: OtlpMetricsPayload, receivedAt = new Date()): MetricPointRow[] {
   const rows: MetricPointRow[] = [];
   for (const rm of payload.resourceMetrics ?? []) {
     const resource = resourceToObject(rm.resource);
     for (const sm of rm.scopeMetrics ?? []) {
       for (const metric of sm.metrics ?? []) {
-        if (metric.gauge) {
-          for (const dp of metric.gauge.dataPoints) {
-            rows.push(numberPointToRow(project, metric.name, "gauge", dp, resource));
-          }
+        const row = (
+          metricName: string,
+          kind: MetricPointRow["kind"],
+          dp: { timeUnixNano?: string; startTimeUnixNano?: string; attributes?: OtlpKeyValue[] },
+          value: number,
+          extra: Record<string, unknown> = {},
+        ): MetricPointRow => ({
+          project,
+          metricName,
+          ts: firstTime([dp.timeUnixNano, dp.startTimeUnixNano], receivedAt),
+          kind,
+          value,
+          attributes: { ...keyValuesToObject(dp.attributes), ...extra },
+          resource,
+        });
+        for (const dp of metric.gauge?.dataPoints ?? []) rows.push(row(metric.name, "gauge", dp, numberValue(dp)));
+        for (const dp of metric.sum?.dataPoints ?? []) rows.push(row(metric.name, "sum", dp, numberValue(dp)));
+        const distributions = [...(metric.histogram?.dataPoints ?? []), ...(metric.exponentialHistogram?.dataPoints ?? [])];
+        for (const dp of distributions) {
+          rows.push(row(metric.name, "histogram", dp, dp.sum ?? 0));
+          rows.push(row(`${metric.name}.count`, "sum", dp, toNumber(dp.count)));
+          if (dp.min !== undefined) rows.push(row(`${metric.name}.min`, "gauge", dp, dp.min));
+          if (dp.max !== undefined) rows.push(row(`${metric.name}.max`, "gauge", dp, dp.max));
         }
-        if (metric.sum) {
-          for (const dp of metric.sum.dataPoints) {
-            rows.push(numberPointToRow(project, metric.name, "sum", dp, resource));
-          }
-        }
-        if (metric.histogram) {
-          for (const dp of metric.histogram.dataPoints) {
-            rows.push({
-              project,
-              metricName: metric.name,
-              ts: nanosToDate(dp.timeUnixNano),
-              kind: "histogram",
-              value: dp.sum ?? 0,
-              attributes: keyValuesToObject(dp.attributes),
-              resource,
-            });
+        for (const dp of metric.summary?.dataPoints ?? []) {
+          rows.push(row(metric.name, "histogram", dp, dp.sum ?? 0));
+          rows.push(row(`${metric.name}.count`, "sum", dp, toNumber(dp.count)));
+          for (const q of dp.quantileValues ?? []) {
+            rows.push(row(`${metric.name}.quantile`, "gauge", dp, q.value ?? 0, { quantile: q.quantile ?? 0 }));
           }
         }
       }
@@ -163,21 +207,12 @@ export function mapOtlpMetricsToRows(project: string, payload: OtlpMetricsPayloa
   return rows;
 }
 
-function numberPointToRow(
-  project: string,
-  metricName: string,
-  kind: "gauge" | "sum",
-  dp: { timeUnixNano: string; asDouble?: number; asInt?: string | number; attributes?: OtlpKeyValue[] },
-  resource: Record<string, unknown>,
-): MetricPointRow {
-  const value = dp.asDouble ?? (dp.asInt !== undefined ? Number(dp.asInt) : 0);
-  return {
-    project,
-    metricName,
-    ts: nanosToDate(dp.timeUnixNano),
-    kind,
-    value,
-    attributes: keyValuesToObject(dp.attributes),
-    resource,
-  };
+function toNumber(value: string | number | undefined): number {
+  if (value === undefined) return 0;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function numberValue(dp: OtlpNumberDataPoint): number {
+  return dp.asDouble ?? (dp.asInt !== undefined ? toNumber(dp.asInt) : 0);
 }

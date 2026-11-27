@@ -137,7 +137,8 @@ flowchart LR
 - 接收 `application/json` 或 `application/x-protobuf` 的 OTLP/HTTP，未壓縮或 `Content-Encoding: gzip`。其他類型回 415。
 - 資料庫出錯回 503 加 `Retry-After`；同時超過 `SENSORIUM_INGEST_MAX_IN_FLIGHT`（32）筆回 429，exporter 會重送。只有永遠存不進去的內容才回 400。
 - 內容上限 `SENSORIUM_INGEST_MAX_BODY_BYTES`（64 MiB），gzip 解壓後也算；超過回 413。
-- histogram 資料點只存加總 `sum`，不存分桶，看得出變化，算不了百分位數。
+- histogram、exponential histogram、summary 資料點用指標名稱存 `sum`，另存 `<name>.count`（有送才存 `.min`、`.max`、`.quantile`）。不存分桶，百分位數只有 summary 的 quantile。
+- log 的嚴重度：有 `severityNumber` 就存它的短名稱（`ERROR`、`WARN`…），沒有才存 `severityText`。沒有時間戳時改用 observed time，再沒有就用收到的時間。
 - 接收端還沒有速率限制，也沒有內容大小上限。
 - `search` 用的是 `ILIKE`，不是全文檢索。
 - `top_sources` 直接從 jsonb 屬性讀欄位，還沒有專用欄位或索引。

@@ -168,3 +168,16 @@ describe("protobuf decode == JSON decode, fed through the same @sensorium/core m
     expect(mapOtlpMetricsToRows("ai-winlab", decoded)).toEqual(mapOtlpMetricsToRows("ai-winlab", METRIC_PAYLOAD));
   });
 });
+
+describe("protobuf records with zero fields", () => {
+  test("a log record without a timestamp decodes and maps instead of failing the batch", () => {
+    const type = testRoot.lookupType("opentelemetry.proto.collector.logs.v1.ExportLogsServiceRequest");
+    const bytes = type
+      .encode(type.fromObject({ resourceLogs: [{ scopeLogs: [{ logRecords: [{ severityNumber: 17, body: { stringValue: "x" } }] }] }] }))
+      .finish();
+    const rows = mapOtlpLogsToRows("p", decodeLogsRequestProtobuf(bytes));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.severity).toBe("ERROR");
+    expect(Math.abs(rows[0]!.ts.getTime() - Date.now())).toBeLessThan(5_000);
+  });
+});

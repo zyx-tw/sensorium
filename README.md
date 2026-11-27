@@ -134,7 +134,8 @@ flowchart LR
 
 - Ingest accepts OTLP/HTTP with `application/json` or `application/x-protobuf`, plain or `Content-Encoding: gzip`. Other types get a 415.
 - A database error answers 503 with `Retry-After`, and more than `SENSORIUM_INGEST_MAX_IN_FLIGHT` (32) exports at once answer 429, so exporters retry. Only a body that can never be stored answers 400.
-- Histogram points store the aggregate `sum` as the value, not the buckets. They show movement, not percentiles.
+- Histogram, exponential histogram and summary points store their `sum` under the metric name, plus `<name>.count` (and `.min`, `.max`, `.quantile` when sent). Buckets are not stored, so percentiles come only from a summary's quantiles.
+- A log's severity is the short name of its `severityNumber` (`ERROR`, `WARN`, ...) when set, else its `severityText`. A missing timestamp falls back to the observed time, then the receive time.
 - A body is capped at `SENSORIUM_INGEST_MAX_BODY_BYTES` (64 MiB), also after gzip decompression; larger bodies get a 413.
 - `search` uses `ILIKE`, not full-text search.
 - `top_sources` reads its fields from the jsonb attributes, with no dedicated columns or indexes yet.

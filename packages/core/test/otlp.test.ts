@@ -261,7 +261,8 @@ describe("mapOtlpTracesToRows", () => {
 describe("mapOtlpMetricsToRows", () => {
   test("maps gauge, sum and histogram(sum) points", () => {
     const rows = mapOtlpMetricsToRows("ai-winlab", METRIC_PAYLOAD);
-    expect(rows).toHaveLength(3);
+    // gauge, sum, and the histogram's sum plus its .count
+    expect(rows).toHaveLength(4);
 
     const gauge = rows.find((r) => r.metricName === "http.server.active_requests")!;
     expect(gauge.kind).toBe("gauge");
@@ -335,5 +336,77 @@ describe("isErrorSpan", () => {
     const outbound = { kind: "client" as const, attributes: { "http.client.name": "fetch" } };
     expect(isErrorSpan({ statusCode: "error", httpStatusCode: 500, ...outbound })).toBe(false);
     expect(isErrorSpan({ statusCode: null, httpStatusCode: 500, ...outbound })).toBe(false);
+  });
+});
+
+describe("timestamps, severity and distributions", () => {
+  const receivedAt = new Date("2026-11-27T00:00:00Z");
+  const logs = (record: Record<string, unknown>) =>
+    mapOtlpLogsToRows("p", { resourceLogs: [{ scopeLogs: [{ logRecords: [record as never] }] }] }, receivedAt);
+
+  test("a log with time 0 or none uses observed time, then the receive time", () => {
+    expect(logs({ timeUnixNano: "0", observedTimeUnixNano: "1764201600000000000" })[0]!.ts.toISOString()).toBe(
+      "2025-11-27T00:00:00.000Z",
+    );
+    expect(logs({ observedTimeUnixNano: "1764201600000000000" })[0]!.ts.toISOString()).toBe("2025-11-27T00:00:00.000Z");
+    expect(logs({})[0]!.ts).toEqual(receivedAt);
+    expect(logs({ timeUnixNano: "0" })[0]!.ts).toEqual(receivedAt);
+  });
+
+  test("severityNumber decides the stored severity; text is kept when there is no number", () => {
+    expect(logs({ severityNumber: 17, severityText: "Error" })[0]!.severity).toBe("ERROR");
+    expect(logs({ severityNumber: 13, severityText: "warning" })[0]!.severity).toBe("WARN");
+    expect(logs({ severityNumber: 21 })[0]!.severity).toBe("FATAL");
+    expect(logs({ severityNumber: 9 })[0]!.severity).toBe("INFO");
+    expect(logs({ severityText: "notice" })[0]!.severity).toBe("notice");
+    expect(logs({})[0]!.severity).toBeNull();
+  });
+
+  test("a span with no start time still maps", () => {
+    const rows = mapOtlpTracesToRows(
+      "p",
+      { resourceSpans: [{ scopeSpans: [{ spans: [{ traceId: "a".repeat(32), spanId: "b".repeat(16), name: "x" }] }] }] },
+      receivedAt,
+    );
+    expect(rows[0]!.startTs).toEqual(receivedAt);
+    expect(rows[0]!.durationMs).toBe(0);
+  });
+
+  test("histogram, exponential histogram and summary keep sum, count, min, max and quantiles", () => {
+    const t = "1764201600000000000";
+    const rows = mapOtlpMetricsToRows(
+      "p",
+      {
+        resourceMetrics: [
+          {
+            scopeMetrics: [
+              {
+                metrics: [
+                  { name: "h", histogram: { dataPoints: [{ timeUnixNano: t, sum: 10, count: "4", min: 1, max: 5 }] } },
+                  { name: "e", exponentialHistogram: { dataPoints: [{ timeUnixNano: t, sum: 2, count: 2 }] } },
+                  {
+                    name: "s",
+                    summary: {
+                      dataPoints: [{ timeUnixNano: t, sum: 9, count: "3", quantileValues: [{ quantile: 0.5, value: 3 }] }],
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      receivedAt,
+    );
+    const by = Object.fromEntries(rows.map((r) => [`${r.metricName}:${JSON.stringify(r.attributes)}`, r]));
+    expect(by["h:{}"]!.value).toBe(10);
+    expect(by["h.count:{}"]!.value).toBe(4);
+    expect(by["h.min:{}"]!.value).toBe(1);
+    expect(by["h.max:{}"]!.value).toBe(5);
+    expect(by["e:{}"]!.kind).toBe("histogram");
+    expect(by["e.count:{}"]!.value).toBe(2);
+    expect(by["s.count:{}"]!.value).toBe(3);
+    expect(by['s.quantile:{"quantile":0.5}']!.value).toBe(3);
+    expect(rows).toHaveLength(9);
   });
 });
