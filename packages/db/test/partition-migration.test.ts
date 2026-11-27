@@ -15,6 +15,7 @@ describe.skipIf(!DATABASE_URL)("0006 partitions spans and logs (integration, req
   let pool: Pool;
   const day = 86_400_000;
   const now = Date.now();
+  let goneId = 0;
 
   beforeAll(async () => {
     admin = new Pool({ connectionString: DATABASE_URL });
@@ -43,6 +44,10 @@ describe.skipIf(!DATABASE_URL)("0006 partitions spans and logs (integration, req
       );
     }
     await pool.query(`insert into logs (project, ts, body) values ('p', now(), 'a'), ('p', now() - interval '2 days', 'b')`);
+    // The newest log is gone before the migration: its id must not come back.
+    const { rows: gone } = await pool.query(`insert into logs (project, ts, body) values ('p', now(), 'gone') returning id::int`);
+    goneId = gone[0].id;
+    await pool.query("delete from logs where id = $1", [goneId]);
     await runMigrations(pool);
   });
 
@@ -90,11 +95,11 @@ describe.skipIf(!DATABASE_URL)("0006 partitions spans and logs (integration, req
     expect(rows[0]).toEqual({ s: true, l: true });
   });
 
-  test("log ids keep increasing after the copy", async () => {
-    const { rows: before } = await pool.query("select max(id)::int m from logs");
-    await pool.query(`insert into logs (project, ts, body) values ('p', now(), 'c')`);
-    const { rows: after } = await pool.query("select max(id)::int m from logs");
-    expect(after[0].m).toBe(before[0].m + 1);
+  test("log ids continue after the old sequence, past deleted rows", async () => {
+    const { rows } = await pool.query(`insert into logs (project, ts, body) values ('p', now(), 'c') returning id::int`);
+    expect(rows[0].id).toBeGreaterThan(goneId);
+    const { rows: reused } = await pool.query("select count(*)::int n from logs where id = $1", [goneId]);
+    expect(reused[0].n).toBe(0);
   });
 
   test("a retried span upserts instead of duplicating", async () => {

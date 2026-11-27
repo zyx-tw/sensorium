@@ -41,11 +41,14 @@ load)
   # One pass per day, oldest first, then one for anything dated after tomorrow.
   # The staging table plus `on conflict do nothing` keeps a span that arrived
   # again since the restart from failing the load.
+  # The day windows come from one base date, so a load that runs past UTC
+  # midnight cannot skip a day.
+  base=$(date -u +%F)
   for d in $(seq "$days" -1 0) future; do
     if [ "$d" = future ]; then
-      where="start_ts >= '$(date -u -d tomorrow +%F)'"
+      where="start_ts >= '$(date -u -d "$base 1 days" +%F)'"
     else
-      where="start_ts >= '$(date -u -d "$d days ago" +%F)' and start_ts < '$(date -u -d "$((d - 1)) days ago" +%F)'"
+      where="start_ts >= '$(date -u -d "$base $((-d)) days" +%F)' and start_ts < '$(date -u -d "$base $((1 - d)) days" +%F)'"
     fi
     zstd -dc "$file" | psql -c "\copy spans_restore from stdin where $where"
     n=$(psql -c "with i as (insert into spans select * from spans_restore on conflict do nothing returning 1) select count(*) from i")

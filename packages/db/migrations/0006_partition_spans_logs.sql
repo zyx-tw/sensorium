@@ -65,7 +65,12 @@ create table logs (
 ) partition by range (ts);
 
 alter sequence logs_id_seq owned by logs.id;
-select setval('logs_id_seq', coalesce((select max(id) from logs_legacy), 0) + 1, false);
+-- Continue after the old sequence, not after max(id): ids of deleted rows are
+-- never handed out again, so golem's `id > cursor` reader skips nothing.
+select setval('logs_id_seq',
+  greatest(coalesce((select max(id) from logs_legacy), 0),
+           (select case when is_called then last_value else last_value - 1 end from logs_legacy_id_seq)) + 1,
+  false);
 
 -- Day partitions for the window that matters: from the oldest row (but no
 -- further back than 60 days) to a week ahead. A row outside it, such as a
