@@ -49,7 +49,7 @@ describe.skipIf(!DATABASE_URL)("0006 partitions spans and logs (integration, req
     goneId = gone[0].id;
     await pool.query("delete from logs where id = $1", [goneId]);
     await runMigrations(pool);
-  });
+  }, 30_000); // about 70 partitions per table: slow on a busy machine
 
   afterAll(async () => {
     await pool.end();
