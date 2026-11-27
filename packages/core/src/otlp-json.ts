@@ -29,7 +29,8 @@ export interface OtlpResource {
 }
 
 export interface OtlpLogRecord {
-  timeUnixNano: string;
+  /** 0 or absent means unknown; see firstTime in otlp.ts. */
+  timeUnixNano?: string;
   observedTimeUnixNano?: string;
   severityNumber?: number;
   severityText?: string;
@@ -81,8 +82,8 @@ export interface OtlpSpan {
   parentSpanId?: string;
   name: string;
   kind?: number;
-  startTimeUnixNano: string;
-  endTimeUnixNano: string;
+  startTimeUnixNano?: string;
+  endTimeUnixNano?: string;
   attributes?: OtlpKeyValue[];
   status?: OtlpSpanStatus;
 }
@@ -97,16 +98,30 @@ export interface OtlpTracesPayload {
 }
 
 export interface OtlpNumberDataPoint {
-  timeUnixNano: string;
+  timeUnixNano?: string;
+  startTimeUnixNano?: string;
   asDouble?: number;
   asInt?: string | number;
   attributes?: OtlpKeyValue[];
 }
 
+/** A histogram or exponential histogram point: only the fields stored. */
 export interface OtlpHistogramDataPoint {
-  timeUnixNano: string;
+  timeUnixNano?: string;
+  startTimeUnixNano?: string;
   count?: string | number;
   sum?: number;
+  min?: number;
+  max?: number;
+  attributes?: OtlpKeyValue[];
+}
+
+export interface OtlpSummaryDataPoint {
+  timeUnixNano?: string;
+  startTimeUnixNano?: string;
+  count?: string | number;
+  sum?: number;
+  quantileValues?: Array<{ quantile?: number; value?: number }>;
   attributes?: OtlpKeyValue[];
 }
 
@@ -115,6 +130,8 @@ export interface OtlpMetric {
   gauge?: { dataPoints: OtlpNumberDataPoint[] };
   sum?: { dataPoints: OtlpNumberDataPoint[] };
   histogram?: { dataPoints: OtlpHistogramDataPoint[] };
+  exponentialHistogram?: { dataPoints: OtlpHistogramDataPoint[] };
+  summary?: { dataPoints: OtlpSummaryDataPoint[] };
 }
 
 export interface OtlpMetricsPayload {

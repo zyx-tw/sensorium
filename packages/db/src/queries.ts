@@ -330,7 +330,7 @@ export async function queryLogs(pool: Pool, params: QueryLogsParams): Promise<Lo
   }
   if (params.severity) {
     values.push(params.severity);
-    conditions.push(`severity = $${values.length}`);
+    conditions.push(`upper(severity) = upper($${values.length})`);
   }
   if (params.contains) {
     values.push(`%${params.contains}%`);
@@ -383,7 +383,7 @@ export async function errorSummary(
   const since = new Date(Date.now() - params.windowMinutes * 60_000);
   const [logCountRes, spanCountRes, topRes] = await Promise.all([
     pool.query<{ count: string }>(
-      "select count(*) from logs where project = $1 and ts >= $2 and severity in ('ERROR', 'FATAL')",
+      "select count(*) from logs where project = $1 and ts >= $2 and upper(severity) in ('ERROR', 'FATAL')",
       [params.project, since],
     ),
     // Mirrors packages/core's isErrorSpan(): an explicit OTLP ERROR status counts,
@@ -400,7 +400,7 @@ export async function errorSummary(
     ),
     pool.query<{ body: string; count: string }>(
       `select body, count(*) from logs
-       where project = $1 and ts >= $2 and severity in ('ERROR', 'FATAL') and body is not null
+       where project = $1 and ts >= $2 and upper(severity) in ('ERROR', 'FATAL') and body is not null
        group by body order by count(*) desc limit 5`,
       [params.project, since],
     ),
@@ -498,7 +498,7 @@ export async function topSources(
         attributes ->> 'geo.city' as city,
         attributes ->> 'geo.region' as region,
         ts,
-        (severity in ('ERROR', 'FATAL')) as is_error
+        (upper(severity) in ('ERROR', 'FATAL')) as is_error
       from logs
       where project = $1 and ts >= $2 and attributes ->> 'client.address' is not null
     )
@@ -539,7 +539,7 @@ export async function topSources(
     , log_routes as (
       select attributes ->> 'client.address' as ip,
         attributes ->> 'http.route' as route,
-        (severity in ('ERROR', 'FATAL')) as is_error
+        (upper(severity) in ('ERROR', 'FATAL')) as is_error
       from logs
       where project = $1 and ts >= $2
         and attributes ->> 'client.address' is not null
