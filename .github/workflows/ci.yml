@@ -10,12 +10,15 @@ permissions:
 
 jobs:
   check:
-    name: Typecheck, lint, test
+    name: Typecheck, lint, test (Postgres ${{ matrix.postgres }})
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        postgres: ["16", "18"]
     services:
       # packages/db runs its integration tests when DATABASE_URL is set.
       postgres:
-        image: postgres:16-alpine
+        image: postgres:${{ matrix.postgres }}-alpine
         env:
           POSTGRES_USER: sensorium
           POSTGRES_PASSWORD: sensorium

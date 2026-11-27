@@ -21,7 +21,10 @@ x-database: &database
 
 services:
   postgres:
-    image: postgres:16-alpine
+    # 16 by default, so an existing volume keeps working. A new instance can start on 18:
+    # SENSORIUM_POSTGRES_IMAGE=postgres:18-alpine (CI tests both). Moving a volume across
+    # majors needs pg_upgrade or a dump and restore.
+    image: ${SENSORIUM_POSTGRES_IMAGE:-postgres:16-alpine}
     restart: unless-stopped
     environment:
       POSTGRES_USER: sensorium

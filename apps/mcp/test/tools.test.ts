@@ -42,7 +42,7 @@ describe.skipIf(!DATABASE_URL)("mcp tools (integration, requires DATABASE_URL)",
   test("every tool is annotated read-only and declares an output schema", async () => {
     const { result } = await call(app, "tools/list");
     const tools = result.tools as { name: string; annotations?: Record<string, boolean>; outputSchema?: unknown }[];
-    expect(tools.length).toBe(9);
+    expect(tools.length).toBe(10);
     for (const tool of tools) {
       expect(tool.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false });
       expect(tool.outputSchema).toBeDefined();

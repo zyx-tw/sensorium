@@ -56,7 +56,7 @@ describe("landing page", () => {
       expect(page).toContain(`<h2>${heading}</h2>`);
       expect(md).toContain(`## ${heading}\n`);
     }
-    const tools = ["list_projects", "query_logs", "query_traces", "list_traces", "error_summary", "top_sources", "query_metrics", "search"];
+    const tools = ["list_projects", "query_logs", "query_traces", "list_traces", "error_summary", "top_sources", "query_metrics", "search", "agent_usage", "storage_stats"];
     for (const tool of tools) {
       expect(page).toContain(`<code>${tool}</code>`);
       expect(md).toContain(`\`${tool}\``);

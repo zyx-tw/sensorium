@@ -1,6 +1,7 @@
 import type { CallToolResult, McpServer } from "@modelcontextprotocol/server";
 import { buildSpanTree } from "@sensorium/core";
 import {
+  agentUsage,
   errorSummary,
   listMetricNames,
   listProjects,
@@ -145,6 +146,26 @@ export function registerTools(server: McpServer, pool: Pool): void {
     },
     async ({ project, windowMinutes, limit }) =>
       result(await listTraces(pool, { project, windowMinutes, limit })),
+  );
+
+  server.registerTool(
+    "agent_usage",
+    {
+      title: "Agent usage",
+      description:
+        "Token use, calls, errors and latency per model and per tool for one project, from spans that follow the " +
+        "OpenTelemetry GenAI conventions (gen_ai.operation.name, gen_ai.request.model, gen_ai.usage.*, gen_ai.tool.name). " +
+        "Also lists the most common error.type values. Empty when the project sends no gen_ai spans.",
+      annotations: READ_ONLY,
+      outputSchema: OUTPUT,
+      inputSchema: z.object({
+        project: z.string(),
+        since: z.string().datetime().describe("ISO 8601 timestamp, inclusive lower bound"),
+        until: z.string().datetime().optional(),
+      }),
+    },
+    async ({ project, since, until }) =>
+      result(await agentUsage(pool, { project, since: new Date(since), until: until ? new Date(until) : undefined })),
   );
 
   server.registerTool(

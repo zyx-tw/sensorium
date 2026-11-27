@@ -93,6 +93,7 @@ sensorium.example.com {
 | `top_sources` | 最常出现的客户端、国家和路由 |
 | `query_metrics` | 按名称查询 metric 数据点 |
 | `search` | 在日志和 span 里做文字搜索 |
+| `agent_usage` | 从 `gen_ai.*` span 算出每个模型与工具的 token、调用、错误与延迟 |
 | `storage_stats` | 数据库大小、分区，以及没有数据或被拒收的项目 |
 
 每个工具都是只读，并返回结构化内容。服务器的数据库连接也是只读。

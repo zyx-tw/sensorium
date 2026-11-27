@@ -75,3 +75,17 @@ deploy/spans-0006.sh load spans-pre-0006.zst   # per day, skipping rows past ret
 The file is about a tenth of the table. The script stops at the first error,
 refuses to truncate when the row count in the file differs from the table, and
 keeps the file until you delete it.
+
+## PostgreSQL version
+
+Compose runs `postgres:16-alpine` by default, so an existing volume keeps working. CI tests both 16 and 18. A new instance can start on 18 with `SENSORIUM_POSTGRES_IMAGE=postgres:18-alpine` in `.env`.
+
+An existing volume cannot change major version in place. To move a 16 volume to 18:
+
+1. Stop ingest and mcp: `docker compose stop ingest mcp`.
+2. Dump: `docker compose exec postgres pg_dumpall -U sensorium > sensorium.sql`.
+3. Set `SENSORIUM_POSTGRES_IMAGE=postgres:18-alpine` and give the postgres service a new volume. The 18 image keeps its data in `/var/lib/postgresql/18/docker`, so mount the volume at `/var/lib/postgresql`.
+4. Start postgres alone, then restore: `docker compose exec -T postgres psql -U sensorium -d postgres < sensorium.sql`.
+5. Start everything with `docker compose up -d` and call `storage_stats` to check the row counts.
+
+A large metrics table makes the dump slow. Drop old partitions with retention first.
