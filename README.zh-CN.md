@@ -93,6 +93,11 @@ sensorium.example.com {
 | `top_sources` | 最常出现的客户端、国家和路由 |
 | `query_metrics` | 按名称查询 metric 数据点 |
 | `search` | 在日志和 span 里做文字搜索 |
+| `storage_stats` | 数据库大小、分区，以及没有数据或被拒收的项目 |
+
+每个工具都是只读，并返回结构化内容。服务器的数据库连接也是只读。
+
+`GET /ready`（ingest 与 MCP）只在数据库有响应时返回 200。`GET /health` 只代表进程还活着。
 
 ## 配置
 

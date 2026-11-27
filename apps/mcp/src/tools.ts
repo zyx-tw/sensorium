@@ -1,4 +1,4 @@
-import type { McpServer, CallToolResult } from "@modelcontextprotocol/server";
+import type { CallToolResult, McpServer } from "@modelcontextprotocol/server";
 import { buildSpanTree } from "@sensorium/core";
 import {
   errorSummary,
@@ -9,24 +9,60 @@ import {
   queryMetrics,
   queryTraceSpans,
   searchLogs,
+  storageStats,
   topSources,
   type Pool,
 } from "@sensorium/db";
 import { z } from "zod";
 
-function textResult(data: unknown): CallToolResult {
-  return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+/**
+ * Every tool reads telemetry and changes nothing, so all of them carry the same hints:
+ * a client may run them without asking, and calling one twice gives the same answer.
+ */
+const READ_ONLY = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } as const;
+
+/**
+ * Tool results are `{ result, truncated? }`: `result` is what the tool reads, and
+ * `truncated` is true when a list stopped at its limit, so a caller knows to narrow the
+ * window or raise the limit. The text content is the same JSON, compact.
+ */
+const OUTPUT = z.object({
+  result: z.unknown(),
+  truncated: z.boolean().optional().describe("true when the list stopped at its limit"),
+});
+
+function result(data: unknown, limit?: number): CallToolResult & { structuredContent: z.infer<typeof OUTPUT> } {
+  const structuredContent: z.infer<typeof OUTPUT> = { result: data };
+  if (limit !== undefined && Array.isArray(data)) structuredContent.truncated = data.length >= limit;
+  return { content: [{ type: "text", text: JSON.stringify(structuredContent) }], structuredContent };
 }
 
-/** Registers the read-only observability tools. All reads are cross-project — the MCP token is a single trusted consumer (kilo). */
+/** Registers the read-only observability tools. All reads are cross-project: every authenticated reader sees every project. */
 export function registerTools(server: McpServer, pool: Pool): void {
   server.registerTool(
     "list_projects",
     {
       title: "List projects",
-      description: "Lists every registered project with last-seen time and per-signal row counts.",
+      description:
+        "Lists every registered project with its creation and last-seen time (last ingest, accurate to about 30 seconds).",
+      annotations: READ_ONLY,
+      outputSchema: OUTPUT,
     },
-    async () => textResult(await listProjects(pool)),
+    async () => result(await listProjects(pool)),
+  );
+
+  server.registerTool(
+    "storage_stats",
+    {
+      title: "Storage stats",
+      description:
+        "Health of sensorium itself: database size, size and partition range of each table (oldest and newest day " +
+        "kept), rows waiting in default partitions, and the projects that have stopped sending. Check it when " +
+        "data looks missing: a full disk or a stopped retention sweep shows here first.",
+      annotations: READ_ONLY,
+      outputSchema: OUTPUT,
+    },
+    async () => result(await storageStats(pool)),
   );
 
   server.registerTool(
@@ -37,6 +73,8 @@ export function registerTools(server: McpServer, pool: Pool): void {
         "Queries logs for a project within a time window, optionally filtered by severity, trace_id, a body substring, " +
         "source IP (client.address), or route (http.route). Returns full attributes per row, including " +
         "client.address/geo.country/geo.city/geo.region/http.route when the producer sets them.",
+      annotations: READ_ONLY,
+      outputSchema: OUTPUT,
       inputSchema: z.object({
               project: z.string(),
               since: z.string().datetime().describe("ISO 8601 timestamp, inclusive lower bound"),
@@ -61,7 +99,7 @@ export function registerTools(server: McpServer, pool: Pool): void {
         route,
         limit,
       });
-      return textResult(rows);
+      return result(rows, Math.min(limit ?? 100, 1000));
     },
   );
 
@@ -70,6 +108,8 @@ export function registerTools(server: McpServer, pool: Pool): void {
     {
       title: "Query trace",
       description: "Fetches every span for a trace_id in a project and assembles them into a parent/child tree.",
+      annotations: READ_ONLY,
+      outputSchema: OUTPUT,
       inputSchema: z.object({
               project: z.string(),
               traceId: z.string(),
@@ -77,7 +117,7 @@ export function registerTools(server: McpServer, pool: Pool): void {
     },
     async ({ project, traceId }) => {
       const spans = await queryTraceSpans(pool, { project, traceId });
-      return textResult(buildSpanTree(spans));
+      return result(buildSpanTree(spans));
     },
   );
 
@@ -94,6 +134,8 @@ export function registerTools(server: McpServer, pool: Pool): void {
         "Excludes outbound spans (this service's own fetch/db calls, e.g. calls to Supabase) from the " +
         "representative pick so it only shows requests this service actually served. Feed a traceId from " +
         "here into query_traces for the full span tree of one request.",
+      annotations: READ_ONLY,
+      outputSchema: OUTPUT,
       inputSchema: z.object({
               project: z.string(),
               windowMinutes: z.number().int().positive().max(7 * 24 * 60).default(60),
@@ -101,7 +143,7 @@ export function registerTools(server: McpServer, pool: Pool): void {
             }),
     },
     async ({ project, windowMinutes, limit }) =>
-      textResult(await listTraces(pool, { project, windowMinutes, limit })),
+      result(await listTraces(pool, { project, windowMinutes, limit })),
   );
 
   server.registerTool(
@@ -110,12 +152,14 @@ export function registerTools(server: McpServer, pool: Pool): void {
       title: "Error summary",
       description:
         "Counts ERROR/FATAL logs and error-status spans for a project over a recent time window, with the top repeated log messages.",
+      annotations: READ_ONLY,
+      outputSchema: OUTPUT,
       inputSchema: z.object({
               project: z.string(),
               windowMinutes: z.number().int().positive().max(7 * 24 * 60).default(60),
             }),
     },
-    async ({ project, windowMinutes }) => textResult(await errorSummary(pool, { project, windowMinutes })),
+    async ({ project, windowMinutes }) => result(await errorSummary(pool, { project, windowMinutes })),
   );
 
   server.registerTool(
@@ -132,13 +176,15 @@ export function registerTools(server: McpServer, pool: Pool): void {
         "sit on a sibling request span in the SAME trace — so both are pulled from any inbound span across " +
         "every trace the IP touched, not just the row that happened to carry the IP. Sorted by request count " +
         "descending. Also returns a by-country rollup for 'which countries are hitting us' at a glance.",
+      annotations: READ_ONLY,
+      outputSchema: OUTPUT,
       inputSchema: z.object({
               project: z.string(),
               windowMinutes: z.number().int().positive().max(7 * 24 * 60).default(60),
               limit: z.number().int().positive().max(1000).default(20).describe("max number of source IPs to return"),
             }),
     },
-    async ({ project, windowMinutes, limit }) => textResult(await topSources(pool, { project, windowMinutes, limit })),
+    async ({ project, windowMinutes, limit }) => result(await topSources(pool, { project, windowMinutes, limit })),
   );
 
   server.registerTool(
@@ -151,7 +197,9 @@ export function registerTools(server: McpServer, pool: Pool): void {
         "producer reports. With metricName: whole-window min/max/avg/count plus raw points, newest first, up " +
         "to limit (summary ignores limit). A metric with several series (e.g. hostmetrics' per-cpu/per-state " +
         "points) interleaves them — the labels live in each point's attributes, so group client-side for " +
-        "per-series numbers. Histogram points carry ingest's v0 sum-only reduction.",
+        "per-series numbers. A histogram or summary is stored as its sum under the metric name plus <name>.count, .min, .max and .quantile.",
+      annotations: READ_ONLY,
+      outputSchema: OUTPUT,
       inputSchema: z.object({
               project: z.string(),
               metricName: z.string().optional().describe("exact metric name; omit to list which metrics exist"),
@@ -168,8 +216,8 @@ export function registerTools(server: McpServer, pool: Pool): void {
     },
     async ({ project, metricName, since, until, limit }) => {
       const window = { project, since: new Date(since), until: until ? new Date(until) : undefined };
-      if (!metricName) return textResult(await listMetricNames(pool, window));
-      return textResult(await queryMetrics(pool, { ...window, metricName, limit }));
+      if (!metricName) return result(await listMetricNames(pool, window));
+      return result(await queryMetrics(pool, { ...window, metricName, limit }));
     },
   );
 
@@ -178,6 +226,8 @@ export function registerTools(server: McpServer, pool: Pool): void {
     {
       title: "Search logs",
       description: "v0 substring search (ILIKE) over log body and attributes for a project since a given time.",
+      annotations: READ_ONLY,
+      outputSchema: OUTPUT,
       inputSchema: z.object({
               project: z.string(),
               q: z.string(),
@@ -186,6 +236,6 @@ export function registerTools(server: McpServer, pool: Pool): void {
             }),
     },
     async ({ project, q, since, limit }) =>
-      textResult(await searchLogs(pool, { project, q, since: new Date(since), limit })),
+      result(await searchLogs(pool, { project, q, since: new Date(since), limit }), Math.min(limit ?? 100, 1000)),
   );
 }

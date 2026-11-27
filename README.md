@@ -91,6 +91,11 @@ Without Docker, [deploy/](deploy/) has systemd units for a checkout with Bun and
 | `top_sources` | the busiest clients, countries and routes |
 | `query_metrics` | metric points by name |
 | `search` | a text search across logs and spans |
+| `storage_stats` | database size, partitions, and projects that went silent or were refused |
+
+Every tool is read-only and returns structured content. The server's database session is read-only too.
+
+`GET /ready` on ingest and MCP answers 200 only while the database responds. `GET /health` only says the process is up.
 
 ## Configuration
 

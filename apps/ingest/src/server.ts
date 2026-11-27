@@ -7,7 +7,15 @@ import {
   type OtlpMetricsPayload,
   type OtlpTracesPayload,
 } from "@sensorium/core";
-import { insertLogs, insertMetricPoints, insertSpans, touchProjectLastSeen, type Pool } from "@sensorium/db";
+import {
+  databaseReady,
+  insertLogs,
+  insertMetricPoints,
+  insertSpans,
+  recordProjectRejection,
+  touchProjectLastSeen,
+  type Pool,
+} from "@sensorium/db";
 import { createIngestAuth, type IngestAuth } from "./auth.js";
 import { serveLanding } from "./landing.js";
 import { decodeLogsRequestProtobuf, decodeMetricsRequestProtobuf, decodeTraceRequestProtobuf } from "./otlp-protobuf.js";
@@ -83,6 +91,7 @@ export function createIngestApp(pool: Pool, options: IngestOptions = {}) {
   } = options;
   const auth = options.auth ?? createIngestAuth(pool, now);
   const lastSeenWritten = new Map<string, number>();
+  const lastRejectionWritten = new Map<string, number>();
   let inFlight = 0;
 
   async function readBody(req: Request): Promise<Uint8Array> {
@@ -118,6 +127,17 @@ export function createIngestApp(pool: Pool, options: IngestOptions = {}) {
     await touchProjectLastSeen(pool, project).catch((err: unknown) => {
       lastSeenWritten.delete(project);
       console.error("ingest: last_seen update failed:", err);
+    });
+  }
+
+  /** Notes a refused export on the project (at most once per interval), so storage_stats can show it. */
+  async function noteRejection(project: string, status: number, reason: string): Promise<void> {
+    const last = lastRejectionWritten.get(project) ?? 0;
+    if (now() - last < LAST_SEEN_INTERVAL_MS) return;
+    lastRejectionWritten.set(project, now());
+    await recordProjectRejection(pool, project, status, reason).catch((err: unknown) => {
+      lastRejectionWritten.delete(project);
+      console.error("ingest: recording a rejection failed:", err);
     });
   }
 
@@ -157,9 +177,13 @@ export function createIngestApp(pool: Pool, options: IngestOptions = {}) {
       try {
         inserted = await store(project, await readBody(req), format);
       } catch (err) {
-        if (err instanceof BadRequest) return failure(format, err.status, err.message);
+        if (err instanceof BadRequest) {
+          await noteRejection(project, err.status, err.message);
+          return failure(format, err.status, err.message);
+        }
         if (isPermanentDbError(err)) {
           console.error("ingest: rejected by the database:", err);
+          await noteRejection(project, 400, `the database rejected the data (${(err as { code: string }).code})`);
           return failure(format, 400, "the database rejected the data");
         }
         console.error("ingest: storage error:", err);
@@ -191,6 +215,14 @@ export function createIngestApp(pool: Pool, options: IngestOptions = {}) {
 
     if (req.method === "GET" && url.pathname === "/health") {
       return Response.json({ status: "ok" });
+    }
+
+    // Unlike /health, /ready fails while the database does not answer: the state in which
+    // every export gets a 503. Compose healthchecks use it.
+    if (req.method === "GET" && url.pathname === "/ready") {
+      return (await databaseReady(pool))
+        ? Response.json({ status: "ready" })
+        : Response.json({ status: "database unavailable" }, { status: 503 });
     }
 
     if (req.method === "POST" && url.pathname === "/v1/logs") {
