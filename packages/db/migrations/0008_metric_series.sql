@@ -144,5 +144,9 @@ begin
       case when r.grantee = 'PUBLIC' then 'public' else quote_ident(r.grantee) end);
     execute format('grant select on metric_series, metric_rollups to %s',
       case when r.grantee = 'PUBLIC' then 'public' else quote_ident(r.grantee) end);
+    -- golem reads which projects send metrics from this column. A reader may hold
+    -- only column grants on projects (golem_ro does), so name the new column.
+    execute format('grant select (last_metric_at) on projects to %s',
+      case when r.grantee = 'PUBLIC' then 'public' else quote_ident(r.grantee) end);
   end loop;
 end $$;

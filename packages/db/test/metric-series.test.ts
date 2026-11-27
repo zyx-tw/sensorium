@@ -38,6 +38,8 @@ describe.skipIf(!DATABASE_URL)("0008 metric series (integration, requires DATABA
     await createProject(pool, "p", "token-p");
     await pool.query(`do $$ begin create role sens_series_ro; exception when duplicate_object then null; end $$`);
     await pool.query("grant select on metric_points to sens_series_ro");
+    // Like golem_ro in production: column grants only on projects.
+    await pool.query("grant select (name, last_seen_at, created_at) on projects to sens_series_ro");
     // Two old points, 2 hours before the cutover.
     await pool.query(
       `insert into metric_points (project, metric_name, ts, kind, value, attributes, resource)
@@ -76,6 +78,11 @@ describe.skipIf(!DATABASE_URL)("0008 metric series (integration, requires DATABA
       await client.query("set role sens_series_ro");
       const { rows } = await client.query("select count(*)::int n from metric_points where project = 'p'");
       expect(rows[0].n).toBe(2);
+      // golem's continuous-project query.
+      const { rows: active } = await client.query(
+        "select name as project from projects where last_metric_at > now() - interval '1 day'",
+      );
+      expect(active.map((r) => r.project)).toContain("p");
     } finally {
       await client.query("reset role");
       client.release();
